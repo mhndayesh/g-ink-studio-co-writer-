@@ -1,0 +1,72 @@
+# Secrets & local config — ignore every .env* EXCEPT committed *.example templates.
+# (Previously .env.production held all prod secrets and was NOT ignored.)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Node / Next
+node_modules/
+.next/
+.turbo/
+dist/
+build/
+.eslintcache
+*.tsbuildinfo
+
+# Databases / runtime data
+*.sqlite
+*.sqlite3
+*.db
+apps/api/storage/
+
+# Test artifacts
+.coverage
+htmlcov/
+coverage/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Private folder (plans, audit notes, API keys, design assets) — never committed.
+# Lives at ../  relative to this repo root; listed here as a safety net.
+../_private/
+_private/
+
+# Personal scratch / dev notes
+story-so-far.md
+ISSUES_NOTES.md
+*_AUDIT*.md
+*_REPORT*.md
+keys-*.text
+keys-*.txt
+
+# DB backups / sqlite side-files
+*.db.bak*
+*.db-*
+*.sqlite-*
+
+# Uploaded cover images (local storage backend)
+apps/api/uploads/
+uploads/
+
+# Local run logs
+.run-logs/
