@@ -13,15 +13,27 @@ class APIResponse(BaseModel):
     error: dict | None = None
 
 
+def _normalize_email(v: str) -> str:
+    # Treat email case-insensitively (and trim whitespace) so `Alice@x.com` and
+    # `alice@x.com` are the SAME account. Without this, the plain unique index on
+    # users.email lets case variants create duplicate accounts and a user who
+    # signs up capitalized can fail to log in lowercased.
+    return v.strip().lower()
+
+
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
-    display_name: str = ""
+    display_name: str = Field(default="", max_length=120)
+
+    _norm_email = field_validator("email")(_normalize_email)
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+    _norm_email = field_validator("email")(_normalize_email)
 
 
 class TokenPair(BaseModel):

@@ -4,7 +4,7 @@ syncs the user's cached tier. Providers hand it a normalized `BillingEvent`
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,9 +18,15 @@ def _now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-# Providers whose subscriptions auto-renew → no HARD plan_expires_at cutoff
-# (lapse is driven by their webhooks). Promo/manual grants DO set a hard expiry.
-_AUTO_RENEW_PROVIDERS = {"stripe"}
+# Providers whose subscriptions auto-renew via webhooks. Promo/manual grants set a
+# hard expiry explicitly; these get a period_end-derived BACKSTOP instead (below) so
+# a MISSED cancel/renewal webhook still lapses the user instead of granting paid
+# access forever. Polar is included because it is a production provider here.
+_AUTO_RENEW_PROVIDERS = {"stripe", "polar"}
+
+# Grace added to current_period_end before the backstop lapses an auto-renewing sub,
+# so a slightly-late renewal webhook doesn't briefly downgrade a paying user.
+_RENEWAL_GRACE = timedelta(days=3)
 
 
 def _sync_user_cache(user: User, sub: Subscription) -> None:
@@ -28,10 +34,15 @@ def _sync_user_cache(user: User, sub: Subscription) -> None:
     if sub.status in plans.ACTIVE_STATUSES:
         user.plan_tier = sub.tier
         user.plan_status = sub.status
-        # Auto-renewing providers have no hard cutoff; clear any stale promo expiry.
-        # Promo/manual grants leave it for set_plan() to set explicitly below.
+        # Auto-renewing providers: set a soft backstop at period_end (+grace). A
+        # renewal webhook carries a new current_period_end and pushes it forward;
+        # if the cancel webhook is ever missed, the hard-expiry check in
+        # entitlement_service lapses the user at period end anyway. No period info →
+        # NULL (no cutoff), same as before. Promo/manual leave it for set_plan().
         if sub.provider in _AUTO_RENEW_PROVIDERS:
-            user.plan_expires_at = None
+            user.plan_expires_at = (
+                sub.current_period_end + _RENEWAL_GRACE if sub.current_period_end else None
+            )
     elif sub.status == plans.STATUS_PAST_DUE:
         # Keep the tier label but entitlement downgrades to free (status not active).
         user.plan_tier = sub.tier

@@ -101,8 +101,8 @@ class Subscription(Base):
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     provider: Mapped[str] = mapped_column(String(32), default="manual")
     tier: Mapped[str] = mapped_column(String(32))           # "dev_ai" | "byok"
-    status: Mapped[str] = mapped_column(String(32), default="active")
-    external_customer_id: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    external_customer_id: Mapped[str] = mapped_column(String(255), default="", index=True)
     external_subscription_id: Mapped[str] = mapped_column(String(255), default="", index=True)
     current_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

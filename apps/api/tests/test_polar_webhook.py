@@ -3,6 +3,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 
 import pytest
 
@@ -24,7 +25,11 @@ def _polar_env(monkeypatch):
     get_settings.cache_clear()
 
 
-def _sign(body: bytes, wid="msg_1", wts="1717400000") -> dict:
+def _sign(body: bytes, wid="msg_1", wts: str | None = None) -> dict:
+    # Default to a CURRENT timestamp so the provider's freshness check (5-min window)
+    # accepts it; pass an explicit wts to exercise the replay/stale path.
+    if wts is None:
+        wts = str(int(time.time()))
     key = base64.b64decode(_SECRET[len("whsec_"):])
     sig = base64.b64encode(hmac.new(key, f"{wid}.{wts}.".encode() + body, hashlib.sha256).digest()).decode()
     return {"webhook-id": wid, "webhook-timestamp": wts, "webhook-signature": f"v1,{sig}"}

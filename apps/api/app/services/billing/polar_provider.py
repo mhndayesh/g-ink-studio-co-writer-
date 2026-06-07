@@ -16,6 +16,7 @@ import base64
 import hashlib
 import hmac
 import json
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -28,6 +29,11 @@ from app.core.config import get_settings
 from app.core.errors import BadRequest, Unauthorized
 from app.db.models import Subscription, User
 from app.services.billing.base import BillingEvent, BillingProvider, CheckoutResult, PortalResult
+
+# Reject webhook deliveries whose signed timestamp is older/newer than this, so a
+# captured-but-valid delivery can't be replayed indefinitely (defense in depth
+# alongside the webhook-id idempotency ledger).
+_WEBHOOK_TOLERANCE_SECONDS = 5 * 60
 
 _STATUS_MAP = {
     "active": plans.STATUS_ACTIVE,
@@ -123,6 +129,15 @@ class PolarBillingProvider(BillingProvider):
         wsig = headers.get("webhook-signature", "")
         if not (wid and wts and wsig):
             raise Unauthorized("Missing Standard Webhooks headers.")
+        # Freshness: the timestamp is part of the signed payload, so this can't be
+        # forged without the secret, but it bounds the replay window for a captured
+        # valid delivery. (Standard Webhooks timestamp = Unix seconds.)
+        try:
+            skew = abs(time.time() - int(wts))
+        except (TypeError, ValueError):
+            raise Unauthorized("Invalid Standard Webhooks timestamp.") from None
+        if skew > _WEBHOOK_TOLERANCE_SECONDS:
+            raise Unauthorized("Polar webhook timestamp outside tolerance window.")
         raw = secret[len("whsec_"):] if secret.startswith("whsec_") else secret
         try:
             key = base64.b64decode(raw)
@@ -176,5 +191,18 @@ class PolarBillingProvider(BillingProvider):
                 external_subscription_id=data.get("id", "") or "", **common,
             )
         if etype == "order.refunded":
-            return BillingEvent(kind="canceled", user_id=user_id, status=plans.STATUS_CANCELED, **common)
+            # A refund's `data` is an ORDER object, not a subscription — its customer
+            # may be nested differently, so `user_id`/`external_customer_id` can both
+            # come up empty. Pull the order's subscription id so apply_event can
+            # resolve the user via the (reliable) stored external_subscription_id;
+            # otherwise a refunded user keeps paid access. (See _resolve_user_id.)
+            order_sub_id = (
+                data.get("subscription_id")
+                or (data.get("subscription") or {}).get("id", "")
+                or ""
+            )
+            return BillingEvent(
+                kind="canceled", user_id=user_id, status=plans.STATUS_CANCELED,
+                external_subscription_id=order_sub_id, **common,
+            )
         return BillingEvent(kind="ignored", **common)

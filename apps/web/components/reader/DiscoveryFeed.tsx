@@ -240,7 +240,7 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
   const [page,     setPage]     = useState(1);
   const [inputVal, setInputVal] = useState("");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["discovery", genre, sort, search, page],
     queryFn: () => {
       const params = new URLSearchParams({
@@ -384,6 +384,21 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
                 }}
               />
             ))}
+          </div>
+        ) : isError ? (
+          // A failed fetch must NOT look like "no stories" (which reads as an empty
+          // library). Show a distinct, retryable error state instead.
+          <div style={{ textAlign: "center", padding: "80px 0", color: "var(--faint)" }}>
+            <div style={{ fontFamily: "var(--font-serif)", fontSize: 48, marginBottom: 16, opacity: 0.4 }}>⚠</div>
+            <p style={{ fontFamily: "var(--font-serif)", fontSize: 18, color: "var(--muted)" }}>
+              Couldn’t load stories.
+            </p>
+            <p style={{ fontSize: 14, color: "var(--faint)", marginTop: 8 }}>
+              This is a loading error, not missing content.{" "}
+              <button onClick={() => refetch()} style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                Try again
+              </button>
+            </p>
           </div>
         ) : !data?.items.length ? (
           <div style={{ textAlign: "center", padding: "80px 0", color: "var(--faint)" }}>

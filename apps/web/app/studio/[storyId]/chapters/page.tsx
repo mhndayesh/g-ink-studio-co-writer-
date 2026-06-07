@@ -120,6 +120,12 @@ export default function ChaptersPage() {
     setStreamText("");
     setInstruction("");
     companion.reset();
+    // Also abort on UNMOUNT (cleanup return) — navigating away from the Chapters
+    // page otherwise leaves the SSE stream running (wasted tokens + setState after
+    // unmount). The effect body handles the activeId-switch case.
+    return () => {
+      abortRef.current?.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 

@@ -93,7 +93,7 @@ export default function WriterInbox() {
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyText, setReplyText]   = useState("");
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["inbox"],
     queryFn: () => request<InboxData>("/v1/inbox/"),
   });
@@ -128,6 +128,17 @@ export default function WriterInbox() {
       request(`/v1/social/notes/${id}/read`, { method: "PUT" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["inbox"] }),
   });
+
+  if (isError) {
+    // Without this, an errored query (data===undefined) falls into the spinner
+    // branch below and spins forever. Show a retryable error instead.
+    return (
+      <div className="flex flex-col items-center justify-center gap-3 h-48 text-sm text-ink-text2">
+        <p>Couldn’t load your reader feedback.</p>
+        <button onClick={() => refetch()} className="btn btn-ghost">Try again</button>
+      </div>
+    );
+  }
 
   if (isLoading || !data) {
     return (

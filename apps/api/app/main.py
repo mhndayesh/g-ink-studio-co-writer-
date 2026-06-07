@@ -2,7 +2,7 @@ import json
 import logging
 import sys
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,7 +19,7 @@ from app.core.errors import AppError, envelope_err
 class _JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
         log = {
-            "ts": datetime.utcnow().isoformat(),
+            "ts": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
             "msg": record.getMessage(),

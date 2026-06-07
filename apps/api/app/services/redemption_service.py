@@ -10,6 +10,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import plans
@@ -77,7 +78,16 @@ async def redeem_code(db: AsyncSession, user: User, code: str) -> dict:
     if not c:
         raise BadRequest("Enter a code.")
 
-    row = (await db.execute(select(RedemptionCode).where(RedemptionCode.code == c))).scalar_one_or_none()
+    # Lock the code row FOR UPDATE so concurrent redemptions are serialized: without
+    # this, N requests (from different users) all read uses=0, all pass the
+    # `uses >= max_uses` check below, and all grant the plan — a max_uses=1 code gets
+    # redeemed many times. The lock makes the check-then-increment atomic. (No-op on
+    # SQLite, which serializes writers at the DB level anyway.)
+    row = (
+        await db.execute(
+            select(RedemptionCode).where(RedemptionCode.code == c).with_for_update()
+        )
+    ).scalar_one_or_none()
     if row is None or not row.active:
         raise NotFound("That code isn’t valid.")
     if row.expires_at is not None and _now() >= _aware(row.expires_at):
@@ -123,7 +133,15 @@ async def redeem_code(db: AsyncSession, user: User, code: str) -> dict:
     await billing_service.set_plan(db, user, row.tier, provider="promo", expires_at=expires_at)
     db.add(CodeRedemption(code_id=row.id, user_id=user.id, tier=row.tier, expires_at=expires_at))
     row.uses = (row.uses or 0) + 1
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # The per-(code,user) unique constraint (uq_code_redemption_per_user) fired:
+        # the same user raced two redeem requests for this code. Surface a clean
+        # 409 instead of a 500 (the FOR UPDATE lock above handles the cross-user
+        # max_uses race; this guards the same-user case the constraint protects).
+        await db.rollback()
+        raise Conflict("You’ve already redeemed this code.") from None
 
     return {
         "tier": row.tier,

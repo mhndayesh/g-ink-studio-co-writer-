@@ -6,6 +6,7 @@ saved onto whatever entity the caller is editing (Story/Chapter/Publication cove
 Static serving of /v1/uploads/<file> is mounted in main.py.
 """
 from fastapi import APIRouter, Request, UploadFile, File
+from fastapi.concurrency import run_in_threadpool
 
 from app.core.deps import CurrentUser
 from app.core.errors import envelope_ok, BadRequest
@@ -21,5 +22,8 @@ async def upload_image(request: Request, user: CurrentUser, file: UploadFile = F
     if file.content_type and not file.content_type.startswith("image/"):
         raise BadRequest("Only image files are allowed.")
     data = await file.read()
-    url = storage_service.save_image(data)  # validates + re-encodes; raises BadRequest on junk
+    # save_image() is CPU-bound (Pillow decode/verify/re-encode) + does a blocking
+    # disk write. Run it off the event loop so a large image or a burst of uploads
+    # can't stall every other request the worker is serving.
+    url = await run_in_threadpool(storage_service.save_image, data)  # validates; raises BadRequest on junk
     return envelope_ok({"url": url})

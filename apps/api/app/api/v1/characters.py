@@ -9,6 +9,15 @@ from app.db.schemas import CharacterIn, CharacterOut, CharacterPatch, Relationsh
 router = APIRouter()
 
 
+async def _require_character_in_story(db: DB, story_id: str, character_id: str) -> None:
+    """Guard that a character id actually belongs to this story before it is used to
+    create a row. Without this, a client can post an arbitrary/foreign character id
+    as a relationship endpoint, creating a cross-story dangling reference."""
+    c = await db.get(Character, character_id)
+    if c is None or c.story_id != story_id:
+        raise NotFound(f"Character {character_id} not found")
+
+
 @router.get("/{story_id}/characters")
 async def list_characters(
     story_id: str,
@@ -74,6 +83,10 @@ async def list_relationships(story_id: str, character_id: str, user: CurrentUser
 @router.post("/{story_id}/characters/{character_id}/relationships")
 async def add_relationship(story_id: str, character_id: str, payload: RelationshipIn, user: CurrentUser, db: DB):
     await get_user_story(story_id, user, db)
+    # Both endpoints of the edge must be characters in THIS story — otherwise a
+    # client could attach an edge to a foreign/non-existent character id.
+    await _require_character_in_story(db, story_id, character_id)
+    await _require_character_in_story(db, story_id, payload.target_id)
     # Upsert on the (story, source, target) invariant — re-posting an existing edge
     # updates it in place instead of tripping the unique constraint, mirroring how
     # Flow approve() reconciles relationships.

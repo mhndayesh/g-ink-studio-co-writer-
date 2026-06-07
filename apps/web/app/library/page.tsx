@@ -63,7 +63,7 @@ export default function LibraryPage() {
   const authed = useIsAuthed();
   const qc = useQueryClient();
 
-  const { data: lib } = useQuery({ queryKey: ["library"], queryFn: api.getMyLibrary, enabled: authed });
+  const { data: lib, isError: libError, refetch: refetchLib } = useQuery({ queryKey: ["library"], queryFn: api.getMyLibrary, enabled: authed });
   const { data: notif } = useQuery({ queryKey: ["notifications"], queryFn: () => api.listNotifications({ limit: 30 }), enabled: authed });
 
   const markAll = useMutation({
@@ -97,6 +97,16 @@ export default function LibraryPage() {
   return (
     <main style={{ maxWidth: 980, margin: "0 auto", padding: "40px clamp(16px,4vw,44px) 80px" }}>
       <h1 style={{ fontFamily: "var(--font-serif)", fontSize: 30, color: "var(--text)", letterSpacing: "-0.01em" }}>Your library</h1>
+
+      {libError && (
+        // Distinguish a failed fetch from a genuinely empty library.
+        <div style={{ marginTop: 16, padding: "12px 16px", border: "1px solid var(--border)", borderRadius: "var(--r-md, 10px)", color: "var(--muted)", fontSize: 14 }}>
+          Couldn’t load your saved stories (a loading error, not lost data).{" "}
+          <button onClick={() => refetchLib()} style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+            Try again
+          </button>
+        </div>
+      )}
 
       {/* Notifications */}
       <section style={{ marginTop: 24 }}>

@@ -75,24 +75,18 @@ async def run(
 
     messages = [Message("system", system), Message("user", user_msg)]
 
-    # Insert a placeholder LLMRun row BEFORE calling the provider. The metering
-    # query (`authorize_ai`) counts existing rows, so inserting first means any
-    # concurrent request that passes the cap check will see this row, preventing
-    # N parallel calls from all passing a cap of 1 (the count-then-spend race).
-    # The row is updated with actual metrics after the call completes.
+    # Insert a placeholder LLMRun row BEFORE calling the provider, on a FRESH,
+    # COMMITTED session (mirrors the streaming path). The metering query
+    # (`authorize_ai`) counts existing rows; a row that is merely flushed on the
+    # request session is INVISIBLE to a concurrent request's COUNT under READ
+    # COMMITTED until this transaction commits — which doesn't happen until the
+    # router returns. Committing the placeholder up front is what actually closes
+    # the count-then-spend race (N parallel calls all passing a cap of 1).
     logged_key_source = "none" if not meter else auth.key_source
-    run_row = LLMRun(
-        user_id=user.id,
-        story_id=story_id,
-        provider=provider.name,
-        model=provider.default_model,
-        page=page,
-        prompt_excerpt=_excerpt(f"SYSTEM:\n{system}\n\nUSER:\n{user_msg}"),
-        response_excerpt="",
-        key_source=logged_key_source,
+    run_id = await _insert_stream_placeholder(
+        user_id=user.id, story_id=story_id, provider_name=provider.name, page=page,
+        system=system, user_msg=user_msg, key_source=logged_key_source,
     )
-    db.add(run_row)
-    await db.flush()  # makes the row visible to concurrent requests in the same tx
 
     started = time.monotonic()
     fallback_used = False
@@ -151,20 +145,22 @@ async def run(
 
     elapsed_ms = (time.monotonic() - started) * 1000.0
 
-    # Downgrade key_source to "none" if the real provider degraded to fallback.
-    if fallback_used or not meter:
-        run_row.key_source = "none"
+    # Downgrade key_source to "none" if the real provider degraded to fallback, so
+    # an empty/failed answer is never metered against the user.
+    final_key_source = "none" if (fallback_used or not meter) else logged_key_source
 
-    # Update the placeholder row with actual metrics now that the call is done.
-    run_row.provider = "fallback" if fallback_used else provider.name
-    run_row.model = resp.model
-    run_row.response_excerpt = _excerpt(resp.text)
-    run_row.tokens_in = resp.tokens_in
-    run_row.tokens_out = resp.tokens_out
-    run_row.ms = elapsed_ms
-    run_row.fallback = fallback_used
-    run_row.error = error
-    await db.flush()
+    # Update the placeholder row with actual metrics on a FRESH session (the
+    # placeholder was committed separately above, so it isn't in `db`'s identity
+    # map). Falls back to inserting a row if the placeholder insert had failed.
+    await _finalize_run_metrics(
+        run_id=run_id, user_id=user.id, story_id=story_id, page=page,
+        system=system, user_msg=user_msg,
+        provider_name="fallback" if fallback_used else provider.name,
+        model=resp.model, response_text=resp.text,
+        tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
+        elapsed_ms=elapsed_ms, fallback_used=fallback_used, error=error,
+        key_source=final_key_source,
+    )
 
     return resp, fallback_used
 
@@ -230,6 +226,35 @@ async def _finalize_stream_run(
             await s.commit()
     except Exception:
         log.warning("failed to finalize streamed LLM run", exc_info=True)
+
+
+async def _finalize_run_metrics(
+    *, run_id, user_id, story_id, page, system, user_msg, provider_name, model,
+    response_text, tokens_in, tokens_out, elapsed_ms, fallback_used, error, key_source,
+) -> None:
+    """Fill in a non-streamed run's REAL metrics on a fresh, committed session (the
+    placeholder was committed separately in run(), so it isn't in the request
+    session). Falls back to inserting a row if the placeholder insert had failed."""
+    from app.db.session import SessionLocal
+    try:
+        async with SessionLocal() as s:
+            row = await s.get(LLMRun, run_id) if run_id else None
+            if row is None:
+                row = LLMRun(user_id=user_id, story_id=story_id, page=page,
+                             prompt_excerpt=_excerpt(f"SYSTEM:\n{system}\n\nUSER:\n{user_msg}"))
+                s.add(row)
+            row.provider = provider_name
+            row.model = model
+            row.response_excerpt = _excerpt(response_text)
+            row.tokens_in = tokens_in
+            row.tokens_out = tokens_out
+            row.ms = elapsed_ms
+            row.fallback = fallback_used
+            row.error = error
+            row.key_source = key_source
+            await s.commit()
+    except Exception:
+        log.warning("failed to finalize LLM run metrics", exc_info=True)
 
 
 async def open_stream(
@@ -411,17 +436,28 @@ def parse_json(text: str) -> dict | list | None:
         except Exception:
             pass
 
-    # 4. Scan every subsequent { and [ — thinking preamble then JSON at end
+    # 4. Scan every subsequent { and [ — thinking preamble then JSON at end.
+    #    Prefer a candidate that consumes the REST of the text (the genuine
+    #    "preamble then JSON" root); a strictly-nested sub-object inside a
+    #    malformed root stops short, so it's only used as a last resort. This
+    #    guards against returning an inner dict that lacks the top-level keys.
     last_pos = first_pos
+    scanned_fallback = None
+    found_fallback = False
     for i in range(first_pos + 1, len(t)):
         if t[i] not in ("{", "["):
             continue
         last_pos = i
         try:
             obj, _end = dec.raw_decode(t, i)
-            return obj
         except Exception:
-            pass
+            continue
+        if not t[_end:].strip():
+            return obj  # consumes to end of text → the intended root
+        if not found_fallback:
+            scanned_fallback, found_fallback = obj, True
+    if found_fallback:
+        return scanned_fallback
 
     # 5. Repair from last position — thinking preamble then truncated JSON
     if last_pos > first_pos:

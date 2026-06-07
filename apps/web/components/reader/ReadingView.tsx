@@ -85,6 +85,10 @@ export default function ReadingView({
 }: ReadingViewProps) {
   const qc = useQueryClient();
   const contentRef = useRef<HTMLDivElement>(null);
+  // Persist the last-synced percentage ACROSS effect re-runs. As a local var inside
+  // the scroll effect it reset to 0 whenever the effect re-ran (e.g. ratingSubmitted
+  // flipping), which restarted the 10%-throttle and fired a duplicate progress write.
+  const lastSyncPctRef = useRef(0);
 
   const [theme, setTheme]         = useState<Theme>("site");
   const [fontSize, setFontSize]   = useState(18);
@@ -133,7 +137,6 @@ export default function ReadingView({
     const el = contentRef.current;
     if (!el) return;
 
-    let lastSyncPct = 0;
     const onScroll = () => {
       const scrolled = window.scrollY + window.innerHeight - el.offsetTop;
       const pct = Math.min(100, Math.round((scrolled / el.offsetHeight) * 100));
@@ -143,9 +146,9 @@ export default function ReadingView({
       const chapterWeight = 100 / Math.max(totalChapters, 1);
       const globalPct = ((chapterNumber - 1) * chapterWeight) + (pct / 100 * chapterWeight);
 
-      // Sync to server every 10% increment, throttled
-      if (Math.abs(pct - lastSyncPct) >= 10 && isAuthenticated) {
-        lastSyncPct = pct;
+      // Sync to server every 10% increment, throttled (ref persists across re-runs)
+      if (Math.abs(pct - lastSyncPctRef.current) >= 10 && isAuthenticated) {
+        lastSyncPctRef.current = pct;
         updateProgress.mutate(Math.round(globalPct));
       }
 

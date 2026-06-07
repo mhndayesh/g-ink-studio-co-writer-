@@ -6,10 +6,10 @@
 #   from app.db.publishing_models import *  # noqa
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, Column, DateTime, Enum, Float, ForeignKey,
+    Boolean, CheckConstraint, Column, DateTime, Enum, Float, ForeignKey,
     Index, Integer, JSON, SmallInteger, String, Text, UniqueConstraint, text,
 )
 from sqlalchemy.orm import relationship
@@ -22,7 +22,11 @@ def _uuid() -> str:
 
 
 def _now() -> datetime:
-    return datetime.utcnow()
+    # Timezone-AWARE UTC, matching core models.py. The columns are DateTime(timezone=True)
+    # so on Postgres these persist as timestamptz and compare correctly against the
+    # aware datetimes the rest of the app produces (a naive utcnow() silently broke
+    # cross-table comparisons).
+    return datetime.now(timezone.utc)
 
 
 # ---------------------------------------------------------------------------
@@ -70,14 +74,14 @@ class Publication(Base):
     genre           = Column(String(60), nullable=True)
     tags            = Column(JSON, nullable=False, default=list)
 
-    published_at           = Column(DateTime, nullable=True)
-    last_chapter_pushed_at = Column(DateTime, nullable=True)
+    published_at           = Column(DateTime(timezone=True), nullable=True, index=True)  # discovery feed orders by recency
+    last_chapter_pushed_at = Column(DateTime(timezone=True), nullable=True)
     total_planned_chapters = Column(Integer, nullable=True)
 
     view_count = Column(Integer, nullable=False, default=0)
 
-    created_at = Column(DateTime, nullable=False, default=_now)
-    updated_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
     pub_chapters  = relationship("PublicationChapter", back_populates="publication", cascade="all, delete-orphan")
     ratings       = relationship("StoryRating",        back_populates="publication", cascade="all, delete-orphan")
@@ -101,7 +105,7 @@ class PublicationChapter(Base):
     title          = Column(String(300), nullable=False)
     content        = Column(Text, nullable=False)
     word_count     = Column(Integer, nullable=False, default=0)
-    pushed_at      = Column(DateTime, nullable=False, default=_now)
+    pushed_at      = Column(DateTime(timezone=True), nullable=False, default=_now)
     is_latest      = Column(Boolean, nullable=False, default=True)
 
     publication = relationship("Publication", back_populates="pub_chapters")
@@ -134,7 +138,7 @@ class ReaderProfile(Base):
     avatar_url   = Column(Text, nullable=True)
     is_age_verified = Column(Boolean, nullable=False, default=False)
     profile_public  = Column(Boolean, nullable=False, default=True, server_default=text("1"))
-    created_at   = Column(DateTime, nullable=False, default=_now)
+    created_at   = Column(DateTime(timezone=True), nullable=False, default=_now)
 
 
 # ---------------------------------------------------------------------------
@@ -151,9 +155,9 @@ class ReadingProgress(Base):
     last_chapter_number   = Column(Integer, nullable=False, default=0)
     completion_percentage = Column(Float,   nullable=False, default=0.0)
 
-    started_at   = Column(DateTime, nullable=False, default=_now)
-    last_read_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)
-    completed_at = Column(DateTime, nullable=True)
+    started_at   = Column(DateTime(timezone=True), nullable=False, default=_now)
+    last_read_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
+    completed_at = Column(DateTime(timezone=True), nullable=True)
     is_following = Column(Boolean, nullable=False, default=False)
 
     publication = relationship("Publication", back_populates="progress_rows")
@@ -171,7 +175,7 @@ class StoryRating(Base):
     __tablename__ = "story_ratings"
 
     id             = Column(String(32), primary_key=True, default=_uuid)
-    reader_id      = Column(String(32), ForeignKey("users.id",        ondelete="CASCADE"), nullable=False)
+    reader_id      = Column(String(32), ForeignKey("users.id",        ondelete="CASCADE"), nullable=False, index=True)
     publication_id = Column(String(32), ForeignKey("publications.id", ondelete="CASCADE"), nullable=False, index=True)
 
     overall           = Column(SmallInteger, nullable=False)
@@ -181,13 +185,26 @@ class StoryRating(Base):
     score_pacing      = Column(SmallInteger, nullable=True)
     score_world       = Column(SmallInteger, nullable=True)
 
-    created_at = Column(DateTime, nullable=False, default=_now)
-    updated_at = Column(DateTime, nullable=False, default=_now, onupdate=_now)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=_now, onupdate=_now)
 
     publication = relationship("Publication", back_populates="ratings")
 
     __table_args__ = (
         UniqueConstraint("reader_id", "publication_id", name="uq_story_rating"),
+        # Defense-in-depth: enforce the 1–5 range at the DB, not just in Pydantic, so
+        # any non-route writer (import/admin tooling) can't store 0 / 99.
+        CheckConstraint("overall BETWEEN 1 AND 5", name="ck_story_rating_overall"),
+        CheckConstraint(
+            "score_story IS NULL OR score_story BETWEEN 1 AND 5", name="ck_story_rating_score_story"),
+        CheckConstraint(
+            "score_craft IS NULL OR score_craft BETWEEN 1 AND 5", name="ck_story_rating_score_craft"),
+        CheckConstraint(
+            "score_characters IS NULL OR score_characters BETWEEN 1 AND 5", name="ck_story_rating_score_characters"),
+        CheckConstraint(
+            "score_pacing IS NULL OR score_pacing BETWEEN 1 AND 5", name="ck_story_rating_score_pacing"),
+        CheckConstraint(
+            "score_world IS NULL OR score_world BETWEEN 1 AND 5", name="ck_story_rating_score_world"),
     )
 
 
@@ -199,14 +216,14 @@ class Review(Base):
     __tablename__ = "reviews"
 
     id             = Column(String(32), primary_key=True, default=_uuid)
-    reader_id      = Column(String(32), ForeignKey("users.id",        ondelete="CASCADE"), nullable=False)
+    reader_id      = Column(String(32), ForeignKey("users.id",        ondelete="CASCADE"), nullable=False, index=True)
     publication_id = Column(String(32), ForeignKey("publications.id", ondelete="CASCADE"), nullable=False)
 
     body           = Column(Text, nullable=False)
     status         = Column(String(20), nullable=False, default="pending")
     flagged_reason = Column(String(200), nullable=True)
-    approved_at    = Column(DateTime, nullable=True)
-    created_at     = Column(DateTime, nullable=False, default=_now)
+    approved_at    = Column(DateTime(timezone=True), nullable=True)
+    created_at     = Column(DateTime(timezone=True), nullable=False, default=_now)
 
     publication = relationship("Publication", back_populates="reviews")
 
@@ -231,10 +248,10 @@ class PrivateNote(Base):
     body              = Column(Text, nullable=False)
 
     writer_reply      = Column(Text, nullable=True)
-    replied_at        = Column(DateTime, nullable=True)
+    replied_at        = Column(DateTime(timezone=True), nullable=True)
     is_read_by_writer = Column(Boolean, nullable=False, default=False)
 
-    created_at = Column(DateTime, nullable=False, default=_now)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now)
 
     publication = relationship("Publication", back_populates="private_notes")
 
@@ -249,7 +266,7 @@ class PublicationFollow(Base):
     reader_id      = Column(String(32), ForeignKey("users.id",        ondelete="CASCADE"), primary_key=True)
     publication_id = Column(String(32), ForeignKey("publications.id", ondelete="CASCADE"), primary_key=True, index=True)
 
-    followed_at       = Column(DateTime, nullable=False, default=_now)
+    followed_at       = Column(DateTime(timezone=True), nullable=False, default=_now)
     notification_pref = Column(String(20), nullable=False, default="immediate")
 
     publication = relationship("Publication", back_populates="follows")
@@ -270,7 +287,7 @@ class Notification(Base):
     body    = Column(Text, nullable=False, default="")
     link    = Column(Text, nullable=True)  # reader URL to open (e.g. /read/<slug>/<n>)
     read    = Column(Boolean, nullable=False, default=False, server_default=text("0"))
-    created_at = Column(DateTime, nullable=False, default=_now, index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=_now, index=True)
 
     __table_args__ = (
         Index("ix_notifications_user_read", "user_id", "read"),

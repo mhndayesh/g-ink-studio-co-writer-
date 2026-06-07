@@ -81,7 +81,9 @@ services:
       - internal
 
   qdrant:
-    image: qdrant/qdrant:latest
+    # Pinned (not :latest) for reproducible deploys. v1.11.0 is the floor required
+    # by the qdrant-client pin in apps/api/pyproject.toml; bump in lockstep with it.
+    image: qdrant/qdrant:v1.11.0
     restart: unless-stopped
     security_opt: ["no-new-privileges:true"]
     mem_limit: 1g

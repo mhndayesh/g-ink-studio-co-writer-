@@ -4,6 +4,8 @@ Access is granted to users with `is_admin=True` OR whose email is listed in the
 ADMIN_EMAILS env var (so the first admin can be bootstrapped without a DB edit).
 This is also how plans get assigned while there is no live payment provider.
 """
+import logging
+
 from fastapi import APIRouter
 
 from app.core.config import get_settings
@@ -15,6 +17,12 @@ from app.db.schemas import ActAsRequest, CreateCodeRequest, SetPlanRequest, Site
 from app.services import auth_service, billing_service, entitlement_service, redemption_service, site_config_service
 
 router = APIRouter()
+
+# Append-only audit trail for privileged actions. There's no audit TABLE yet (would
+# need a migration), so these go to the structured JSON log stream — enough to answer
+# "who granted/changed what" after the fact. Promote to a DB table if tamper-evidence
+# is required.
+audit = logging.getLogger("gink.admin.audit")
 
 
 def _require_admin(user: User) -> None:
@@ -60,6 +68,10 @@ async def set_user_plan(user_id: str, payload: SetPlanRequest, user: CurrentUser
     await billing_service.set_plan(db, target, payload.tier, status=payload.status)
     await db.commit()
     await db.refresh(target)
+    audit.info(
+        "admin plan override", extra={"actor": user.id, "target": user_id,
+                                      "tier": payload.tier, "status": payload.status},
+    )
     return envelope_ok({"user": UserOut.model_validate(target).model_dump(mode="json")})
 
 
@@ -84,6 +96,7 @@ async def force_logout(user_id: str, user: CurrentUser, db: DB):
 
     await auth_service.revoke_all(db, target)
     await db.commit()
+    audit.info("admin force-logout", extra={"actor": user.id, "target": user_id})
 
     return envelope_ok({
         "user_id": user_id,
@@ -103,6 +116,10 @@ async def create_code(payload: CreateCodeRequest, user: CurrentUser, db: DB):
         max_uses=payload.max_uses, note=payload.note, code=payload.code,
     )
     await db.commit()
+    audit.info(
+        "admin code mint", extra={"actor": user.id, "code_id": code.id, "tier": payload.tier,
+                                  "duration_days": payload.duration_days, "max_uses": payload.max_uses},
+    )
     return envelope_ok(redemption_service.serialize(code))
 
 

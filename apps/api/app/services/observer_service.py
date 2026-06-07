@@ -366,11 +366,18 @@ async def apply_evolution(db: AsyncSession, story_id: str, decisions: list[dict]
     """Commit each evolve decision per its save-as class. Prevents profile pollution
     by keeping one-offs as temporary states and only promoting 'permanent' to layers."""
     applied = 0
+    # The character_id on each decision comes from the client; scope every write to
+    # characters that actually belong to this story so a forged/foreign id can't
+    # attach a CharacterState to another tenant's data. (The 'permanent' branch is
+    # already guarded via get_identity → _require_character.)
+    valid_cids = set(
+        (await db.execute(select(Character.id).where(Character.story_id == story_id))).scalars().all()
+    )
     for d in decisions:
         save_as = d.get("save_as", "not_saved")
         cid = d.get("character_id")
         summary = d.get("summary", "")
-        if save_as == "not_saved" or not cid or not summary:
+        if save_as == "not_saved" or not cid or not summary or cid not in valid_cids:
             continue
         if save_as in ("temporary", "recurring"):
             db.add(CharacterState(
