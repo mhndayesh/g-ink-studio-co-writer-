@@ -94,6 +94,21 @@ async def test_unknown_pages_default_to_technical_lane():
 
 
 @pytest.mark.asyncio
+async def test_llamacpp_preset_routes_to_local_server():
+    """The raw llama.cpp preset is local-first: default endpoint :8080, alias
+    'local', no key, and loopback allowed for its user-supplied base_url."""
+    async with SessionLocal() as db:
+        u = await _mk_user(db, "llamacpp@test.com")
+        await _set_lanes(db, u, creative="llamacpp", technical="llamacpp")
+
+        prov = await get_provider_for_page(db, u, "flow.polish")
+        assert prov.name == "llamacpp"
+        assert getattr(prov, "base_url", "") == "http://localhost:8080/v1"
+        assert prov.default_model == "local"
+        assert getattr(prov, "_allow_local_base_url", False) is True
+
+
+@pytest.mark.asyncio
 async def test_embedding_never_uses_non_embedding_provider():
     async with SessionLocal() as db:
         u = await _mk_user(db, "embed@test.com")

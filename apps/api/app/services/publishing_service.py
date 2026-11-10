@@ -8,14 +8,16 @@ from datetime import datetime
 from typing import Optional
 
 from slugify import slugify
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.errors import NotFound, Forbidden, BadRequest
-from app.db.models import Story, Chapter, User
+from app.core.errors import BadRequest, Forbidden, NotFound
+from app.db.models import Chapter, Story, User
 from app.db.publishing_models import Publication, PublicationChapter
 from app.db.publishing_schemas import (
-    PublicationCreate, PublicationUpdate, PushChaptersRequest,
+    PublicationCreate,
+    PublicationUpdate,
+    PushChaptersRequest,
 )
 
 _utcnow = datetime.utcnow  # naive — matches DateTime (no tz) columns in publishing_models
@@ -142,22 +144,26 @@ async def push_chapters(
     pushed: list[PublicationChapter] = []
     new_chapters: list[tuple[int, str]] = []  # (number, title) for version==1 → notify followers
 
-    for chapter in sorted(chapters, key=lambda c: c.number):
+    numbers = [c.number for c in chapters]
+    latest_by_number: dict[int, int] = {}
+    if numbers:
+        # One UPDATE + one grouped MAX instead of two queries per chapter.
         await db.execute(
             update(PublicationChapter)
             .where(PublicationChapter.publication_id == pub_id)
-            .where(PublicationChapter.chapter_number == chapter.number)
+            .where(PublicationChapter.chapter_number.in_(numbers))
             .values(is_latest=False)
         )
-
-        latest = (await db.execute(
-            select(PublicationChapter.version)
+        latest_rows = (await db.execute(
+            select(PublicationChapter.chapter_number, func.max(PublicationChapter.version))
             .where(PublicationChapter.publication_id == pub_id)
-            .where(PublicationChapter.chapter_number == chapter.number)
-            .order_by(PublicationChapter.version.desc())
-            .limit(1)
-        )).scalar_one_or_none()
-        new_version = (latest or 0) + 1
+            .where(PublicationChapter.chapter_number.in_(numbers))
+            .group_by(PublicationChapter.chapter_number)
+        )).all()
+        latest_by_number = {num: int(ver or 0) for num, ver in latest_rows}
+
+    for chapter in sorted(chapters, key=lambda c: c.number):
+        new_version = latest_by_number.get(chapter.number, 0) + 1
 
         snap = PublicationChapter(
             publication_id=pub_id,
@@ -196,12 +202,13 @@ async def push_chapters(
 async def go_live(pub_id: str, user: User, db: AsyncSession) -> Publication:
     pub = await _get_owned_publication(pub_id, user, db)
 
-    chapter_count = (await db.execute(
-        select(PublicationChapter)
+    has_chapters = (await db.execute(
+        select(PublicationChapter.id)
         .where(PublicationChapter.publication_id == pub_id)
         .where(PublicationChapter.is_latest == True)  # noqa: E712
-    )).scalars().first()
-    if not chapter_count:
+        .limit(1)
+    )).scalar_one_or_none()
+    if not has_chapters:
         raise BadRequest("cannot publish: no chapters have been pushed yet")
 
     pub.status = "published"

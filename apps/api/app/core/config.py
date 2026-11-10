@@ -36,10 +36,16 @@ class Settings(BaseSettings):
 
     llm_key_encryption_key: str = ""
 
-    llm_provider: Literal["lmstudio", "openai", "anthropic", "openrouter", "gemini", "deepseek"] = "lmstudio"
+    llm_provider: Literal["lmstudio", "llamacpp", "openai", "anthropic", "openrouter", "gemini", "deepseek"] = "lmstudio"
     lmstudio_base_url: str = "http://localhost:1234/v1"
     lmstudio_model: str = "local-model"
     lmstudio_embed_model: str = "nomic-embed-text-v1.5"
+
+    # Raw llama.cpp `llama-server` (Vulkan/dual-GPU build lives in C:\llama).
+    # OpenAI-compatible; model alias is set by the server's config.env.
+    llamacpp_base_url: str = "http://localhost:8080/v1"
+    llamacpp_model: str = "local"
+    llamacpp_api_key: str = ""
 
     openai_api_key: str = ""
     openai_base_url: str = "https://api.openai.com/v1"
@@ -70,7 +76,7 @@ class Settings(BaseSettings):
     # `dev_ai` tier. Its API key comes from the matching <provider>_api_key above
     # (e.g. system_llm_provider="openai" → openai_api_key). BYOK users never touch
     # this; they use only their own keys.
-    system_llm_provider: Literal["lmstudio", "openai", "anthropic", "openrouter", "gemini", "deepseek"] = "lmstudio"
+    system_llm_provider: Literal["lmstudio", "llamacpp", "openai", "anthropic", "openrouter", "gemini", "deepseek"] = "lmstudio"
 
     # ── House EMBEDDING provider (separate from house chat) ────────────────────
     # The house chat model (system_llm_provider) may not offer an embeddings

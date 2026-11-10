@@ -11,9 +11,11 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import delete as sa_delete, func, select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.prompt_safety import SECURITY_CLAUSE, fence
 from app.db.models import (
     Chapter,
     Character,
@@ -31,8 +33,13 @@ from app.db.models import (
     User,
     World,
 )
-from app.core.prompt_safety import SECURITY_CLAUSE, fence
-from app.db.schemas import ExtractedScene, FlowApproveRequest, FlowEnhanceResponse, FlowExtractResponse, FlowPolishResponse
+from app.db.schemas import (
+    ExtractedScene,
+    FlowApproveRequest,
+    FlowEnhanceResponse,
+    FlowExtractResponse,
+    FlowPolishResponse,
+)
 from app.services import llm_service
 from app.services.context_builder import build_story_context
 
@@ -261,7 +268,8 @@ async def polish(
 
 
 async def extract(db: AsyncSession, user: User, story_id: str, polished: str) -> FlowExtractResponse:
-    ctx = await build_story_context(db, story_id, include_entity_ids=True)
+    ctx_meta: dict = {}
+    ctx = await build_story_context(db, story_id, include_entity_ids=True, meta=ctx_meta)
     user_msg = (
         "STORY CONTEXT (reference only):\n"
         f"{fence('story_context', ctx)}\n\n"
@@ -282,7 +290,13 @@ async def extract(db: AsyncSession, user: User, story_id: str, polished: str) ->
     # when that name is unique in the cast. Ambiguous names with no id resolve to
     # "exists but unidentified" (is_new=False, existing_id=None): approve then
     # neither creates a duplicate nor mutates the wrong record.
-    existing_chars = (await db.execute(select(Character).where(Character.story_id == story_id))).scalars().all()
+    existing_chars = ctx_meta.get("characters")
+    if existing_chars is None:  # defensive: older callers / future context changes
+        existing_chars = (
+            await db.execute(
+                select(Character.id, Character.name).where(Character.story_id == story_id)
+            )
+        ).all()
     by_id = {c.id: c for c in existing_chars}
     by_name = {c.name.lower(): c for c in existing_chars}
     name_counts: dict[str, int] = {}
@@ -504,7 +518,13 @@ async def approve(
     """
     from app.services import version_service
 
-    story = await db.get(Story, story_id)
+    # Lock the story row for the whole approve transaction. Two concurrent
+    # approvals used to read the same max(chapter.number) and both insert the
+    # next chapter — a silent duplicate. FOR UPDATE serializes them on Postgres
+    # (a no-op on SQLite, where the test suite runs).
+    story = (
+        await db.execute(select(Story).where(Story.id == story_id).with_for_update())
+    ).scalar_one_or_none()
     if story is None:
         raise ValueError("story not found")
 
@@ -544,6 +564,7 @@ async def approve(
     }
     new_char_ids: list[str] = []
     name_to_new_id: dict[str, str] = {}
+    pending_chars: list[tuple[str, Character]] = []
     for c in payload.extracted.characters:
         if not c.is_new:
             continue
@@ -557,10 +578,15 @@ async def approve(
             continue
         ch = Character(story_id=story_id, name=c.name.strip(), role=c.role or "", personality=c.note or "")
         db.add(ch)
-        await db.flush()
-        new_char_ids.append(ch.id)
-        name_to_new_id[key] = ch.id
+        pending_chars.append((key, ch))
         existing_by_name[key] = ch
+    # One flush for the whole cast instead of one per character. UUID defaults are
+    # applied at flush, so ids are read back here before the name→id map is built.
+    if pending_chars:
+        await db.flush()
+        for key, ch in pending_chars:
+            new_char_ids.append(ch.id)
+            name_to_new_id[key] = ch.id
 
     # 1b. Update status / arc for existing characters when the scene changes them.
     # Resolve by explicit id first (the only safe key for same-named cast members);
@@ -626,6 +652,7 @@ async def approve(
         loc_row.name.lower(): loc_row for loc_row in existing_loc_rows
     }
     chapter_location_id: str | None = None
+    new_locs: list[Location] = []
     for loc in payload.extracted.locations:
         if not loc.name:
             continue
@@ -633,7 +660,7 @@ async def approve(
         if key not in existing_loc_by_name:
             new_loc = Location(story_id=story_id, name=loc.name.strip(), description=loc.description or "")
             db.add(new_loc)
-            await db.flush()
+            new_locs.append(new_loc)
             existing_loc_by_name[key] = new_loc
         elif loc.description and not existing_loc_by_name[key].description:
             existing_loc_by_name[key].description = loc.description
@@ -641,14 +668,17 @@ async def approve(
     # Try to set the chapter's location_id from location_suggestion
     if payload.extracted.location_suggestion:
         sug = payload.extracted.location_suggestion.strip().lower()
-        if sug in existing_loc_by_name:
-            chapter_location_id = existing_loc_by_name[sug].id
-        else:
+        if sug not in existing_loc_by_name:
             new_loc = Location(story_id=story_id, name=payload.extracted.location_suggestion.strip(), description="")
             db.add(new_loc)
-            await db.flush()
+            new_locs.append(new_loc)
             existing_loc_by_name[sug] = new_loc
-            chapter_location_id = new_loc.id
+    # One flush for every location created in this section (ids needed below).
+    if new_locs:
+        await db.flush()
+    if payload.extracted.location_suggestion:
+        sug = payload.extracted.location_suggestion.strip().lower()
+        chapter_location_id = existing_loc_by_name[sug].id if sug in existing_loc_by_name else None
 
     # 3b. Add new factions
     existing_fac_rows = (await db.execute(select(Faction).where(Faction.story_id == story_id))).scalars().all()
@@ -665,6 +695,7 @@ async def approve(
     # chapter gets linked into chapter_ids below, after the chapter is flushed.
     existing_thread_rows = (await db.execute(select(PlotThread).where(PlotThread.story_id == story_id))).scalars().all()
     existing_thread_by_name: dict[str, PlotThread] = {t.name.lower(): t for t in existing_thread_rows}
+    new_threads: list[PlotThread] = []
     for t in payload.extracted.threads:
         if not t.name:
             continue
@@ -679,7 +710,7 @@ async def approve(
                 chapter_ids=[],
             )
             db.add(new_thread)
-            await db.flush()
+            new_threads.append(new_thread)
             existing_thread_by_name[key] = new_thread
         else:
             # Status evolution: open → paid_off / abandoned is meaningful info from later scenes
@@ -688,6 +719,8 @@ async def approve(
             # Extend description if the AI offered more detail
             if t.description and t.description not in (existing.description or ""):
                 existing.description = (existing.description + " · " if existing.description else "") + t.description
+    if new_threads:
+        await db.flush()  # ids needed when linking chapters/scenes below
 
     # 4. Determine character_ids for the chapter (existing referenced + opted-in new)
     # Build a SAFE name→id map used for every downstream by-name resolution (chapter
@@ -803,12 +836,12 @@ async def approve(
             if rel.description:
                 existing.description = rel.description
 
-    # 8. Link the new chapter into any plot threads it advances
+    # 8. Link the new chapter into any plot threads it advances.
+    # `existing_thread_by_name` already contains every existing thread plus the
+    # ones created in 3c — re-selecting the whole table here was a redundant query.
     if payload.extracted.threads:
-        all_threads = (await db.execute(select(PlotThread).where(PlotThread.story_id == story_id))).scalars().all()
-        threads_by_name = {t.name.lower(): t for t in all_threads}
         for t in payload.extracted.threads:
-            thr = threads_by_name.get(t.name.lower())
+            thr = existing_thread_by_name.get(t.name.lower())
             if thr is None:
                 continue
             ids = list(thr.chapter_ids or [])
@@ -817,33 +850,37 @@ async def approve(
                 thr.chapter_ids = ids
 
     # 9. Store scene-level annotations, revelations, and scene-thread links.
+    # Batched in dependency order (locations → threads → scenes → links/revelations)
+    # so the whole section costs ~4 flushes instead of one per row.
     scene_ids: list[str] = []
     revelation_ids: list[str] = []
     thread_scene_link_ids: list[str] = []
     scenes = payload.extracted.scenes or [_scene_fallback(payload)]
-    for idx, sc in enumerate(scenes, start=1):
-        pov_id = name_to_any_id.get((sc.pov or payload.extracted.pov_suggestion or "").strip().lower())
 
-        loc_id = chapter_location_id
+    # 9a. Resolve every scene location up front, then flush once.
+    new_scene_locs: list[Location] = []
+    for sc in scenes:
         loc_name = (sc.location or payload.extracted.location_suggestion or "").strip()
-        if loc_name:
-            loc_key = loc_name.lower()
-            loc_row = existing_loc_by_name.get(loc_key)
-            if loc_row is None:
-                loc_row = Location(story_id=story_id, name=loc_name, description="")
-                db.add(loc_row)
-                await db.flush()
-                existing_loc_by_name[loc_key] = loc_row
-            loc_id = loc_row.id
+        if not loc_name:
+            continue
+        loc_key = loc_name.lower()
+        if loc_key not in existing_loc_by_name:
+            loc_row = Location(story_id=story_id, name=loc_name, description="")
+            db.add(loc_row)
+            new_scene_locs.append(loc_row)
+            existing_loc_by_name[loc_key] = loc_row
+    if new_scene_locs:
+        await db.flush()
 
-        scene_char_ids = _resolve_ids_from_names(sc.characters, name_to_any_id)
-        if not scene_char_ids:
-            scene_char_ids = list(referenced_ids)
-
+    # 9b. Resolve every scene thread up front (create missing, link the chapter),
+    # then flush once so the ids exist before SceneCard rows reference them.
+    scene_thread_objs: list[list[PlotThread]] = []
+    new_scene_threads: list[PlotThread] = []
+    for sc in scenes:
         thread_names = list(sc.plot_threads or [])
         if len(scenes) == 1 and not thread_names:
             thread_names = [t.name for t in payload.extracted.threads]
-        scene_thread_ids: list[str] = []
+        objs: list[PlotThread] = []
         for name in thread_names:
             key = name.strip().lower()
             if not key:
@@ -852,15 +889,29 @@ async def approve(
             if thr is None:
                 thr = PlotThread(story_id=story_id, name=name.strip(), description="", status="open", chapter_ids=[])
                 db.add(thr)
-                await db.flush()
+                new_scene_threads.append(thr)
                 existing_thread_by_name[key] = thr
-            if thr.id not in scene_thread_ids:
-                scene_thread_ids.append(thr.id)
+            if thr not in objs:
+                objs.append(thr)
             ids = list(thr.chapter_ids or [])
             if chapter.id not in ids:
                 ids.append(chapter.id)
                 thr.chapter_ids = ids
+        scene_thread_objs.append(objs)
+    if new_scene_threads:
+        await db.flush()
 
+    # 9c. Create every scene card in one batch.
+    scene_rows: list[SceneCard] = []
+    for idx, sc in enumerate(scenes, start=1):
+        pov_id = name_to_any_id.get((sc.pov or payload.extracted.pov_suggestion or "").strip().lower())
+        loc_id = chapter_location_id
+        loc_name = (sc.location or payload.extracted.location_suggestion or "").strip()
+        if loc_name:
+            loc_id = existing_loc_by_name[loc_name.lower()].id
+        scene_char_ids = _resolve_ids_from_names(sc.characters, name_to_any_id)
+        if not scene_char_ids:
+            scene_char_ids = list(referenced_ids)
         scene = SceneCard(
             story_id=story_id,
             chapter_id=chapter.id,
@@ -874,7 +925,7 @@ async def approve(
             pov_character_id=pov_id,
             location_id=loc_id,
             character_ids=scene_char_ids,
-            plot_thread_ids=scene_thread_ids,
+            plot_thread_ids=[t.id for t in scene_thread_objs[idx - 1]],
             time_anchor=sc.time_anchor or "",
             time_sort_key=sc.time_sort_key,
             duration_hint=sc.duration_hint or "",
@@ -883,11 +934,18 @@ async def approve(
             content=sc.content or "",
         )
         db.add(scene)
+        scene_rows.append(scene)
+    if scene_rows:
         await db.flush()
-        scene_ids.append(scene.id)
+        scene_ids.extend(s.id for s in scene_rows)
 
-        for tid in scene_thread_ids:
-            link = PlotThreadSceneLink(
+    # 9d. Links + revelations in one batch (scene ids now exist).
+    pending_links: list[PlotThreadSceneLink] = []
+    pending_revelations: list[Revelation] = []
+    for idx, sc in enumerate(scenes):
+        scene = scene_rows[idx]
+        for tid in (scene.plot_thread_ids or []):
+            pending_links.append(PlotThreadSceneLink(
                 story_id=story_id,
                 thread_id=tid,
                 scene_id=scene.id,
@@ -895,16 +953,12 @@ async def approve(
                 status="touch",
                 strength=1.0,
                 evidence=sc.summary or sc.beat or sc.source_excerpt[:200],
-            )
-            db.add(link)
-            await db.flush()
-            thread_scene_link_ids.append(link.id)
-
+            ))
         for rev in sc.revelations:
             if not rev.description:
                 continue
             knowers = [cid for cid in _resolve_ids_from_names(rev.characters_who_know, name_to_any_id) if cid]
-            row = Revelation(
+            pending_revelations.append(Revelation(
                 story_id=story_id,
                 scene_id=scene.id,
                 chapter_id=chapter.id,
@@ -914,18 +968,15 @@ async def approve(
                 reader_knows=rev.reader_knows,
                 notes=rev.notes or "",
                 confidence=rev.confidence,
-            )
-            db.add(row)
-            await db.flush()
-            revelation_ids.append(row.id)
-
-    # 10. Refresh deterministic voice fingerprints now that chapter text exists.
-    try:
-        from app.services import voice_service
-
-        await voice_service.rebuild_profiles(db, story_id)
-    except Exception as e:
-        log.debug("voice profile rebuild failed: %s", e)
+            ))
+    if pending_links:
+        db.add_all(pending_links)
+        await db.flush()
+        thread_scene_link_ids.extend(link.id for link in pending_links)
+    if pending_revelations:
+        db.add_all(pending_revelations)
+        await db.flush()
+        revelation_ids.extend(row.id for row in pending_revelations)
 
     # 11. Mark every open draft for this story as approved so the next Flow
     # Writing session starts on a blank slate (the work that was in progress
@@ -944,24 +995,52 @@ async def approve(
     await db.commit()
     await db.refresh(chapter)
 
-    # Graph reprojection (best-effort). This runs AFTER the chapter commit, so
-    # reproject_story's graph_status / graph_synced_at writes need their own
-    # commit to persist — otherwise the status update is rolled back at session
-    # teardown and the story looks perpetually unsynced (the reconciler would
-    # then keep retrying an already-good graph). On failure graph_status is left
-    # != "ok" so graph_service.reconcile_stale_graphs picks it up later.
-    # reproject_story catches its own Neo4j errors (returns projected=False and
-    # sets graph_status != "ok") rather than raising, so this commit persists
-    # whichever status it landed on. We deliberately do NOT rollback in the
-    # except path: with expire_on_commit=False the already-committed `chapter`
-    # stays readable, and a rollback would force-expire it (breaking the caller's
-    # chapter.id read). Any uncommitted status change is discarded at teardown.
+    # 10. Refresh deterministic voice fingerprints AFTER the chapter transaction
+    # commits. The rebuild walks every chapter's prose; doing it inside the write
+    # transaction held row locks for the whole scan. It runs on its own session so
+    # a failure can never poison the committed approve.
     try:
-        from app.services import graph_service
+        from app.db.session import SessionLocal
+        from app.services import voice_service
 
-        await graph_service.reproject_story(db, story_id)
-        await db.commit()
+        async with SessionLocal() as vdb:
+            await voice_service.rebuild_profiles(vdb, story_id)
+            await vdb.commit()
     except Exception as e:
-        log.warning("graph reprojection failed: %s", e)
+        log.debug("voice profile rebuild failed: %s", e)
+
+    # Graph reprojection (best-effort) runs AFTER the chapter commit.
+    #   * Redis configured -> queue the ARQ task; approve returns immediately.
+    #   * No Redis         -> run inline (original behavior) on this session and
+    #     commit the graph_status / graph_synced_at write.
+    # On any failure graph_status is left != "ok", so the worker's reconcile cron
+    # retries it later. We deliberately do NOT rollback in the except path: with
+    # expire_on_commit=False the committed `chapter` stays readable, and a
+    # rollback would force-expire it (breaking the caller's chapter.id read).
+    try:
+        from app.core.config import get_settings
+
+        if get_settings().redis_url:
+            # Hand the Neo4j projection to the ARQ worker so approve returns
+            # without waiting on graph I/O. The worker's reconcile cron also
+            # retries any story left non-ok.
+            from app.workers.pool import get_pool
+
+            pool = await get_pool()
+            await pool.enqueue_job("reproject_story_task", story_id)
+        else:
+            from app.services import graph_service
+
+            await graph_service.reproject_story(db, story_id)
+            await db.commit()
+    except Exception as e:
+        log.warning("graph reprojection enqueue failed (%s); running inline", e)
+        try:
+            from app.services import graph_service
+
+            await graph_service.reproject_story(db, story_id)
+            await db.commit()
+        except Exception as inline_err:
+            log.warning("graph reprojection failed: %s", inline_err)
 
     return chapter, new_char_ids, added_themes, version.version_no, scene_ids, revelation_ids, thread_scene_link_ids

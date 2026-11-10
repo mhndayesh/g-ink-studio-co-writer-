@@ -6,15 +6,16 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from arq import cron
-from sqlalchemy import select
+from sqlalchemy import and_, delete, or_, select
 
-from app.db.models import Story, Chapter
+from app.db.models import Chapter, FlowDraft, RefreshToken, Story
 from app.db.session import SessionLocal
 from app.services import graph_service, storage_service
-from app.services.publishing_export_service import export_pdf, export_epub
+from app.services.publishing_export_service import export_epub, export_pdf
 
 log = logging.getLogger("gink.worker")
 
@@ -63,6 +64,19 @@ async def export_epub_task(ctx: dict, story_id: str, user_id: str, author_name: 
     return {"ready": True, "key": cache_key, "filename": fname, "mime": mime}
 
 
+async def reproject_story_task(ctx: dict, story_id: str) -> dict:
+    """Re-project one story into Neo4j after an approve.
+
+    Approve used to run this inline, adding Neo4j latency to the write request.
+    With Redis configured it is queued here; the API falls back to inline when
+    Redis is unavailable.
+    """
+    async with SessionLocal() as db:
+        result = await graph_service.reproject_story(db, story_id)
+        await db.commit()
+    return {"story_id": story_id, **result}
+
+
 async def reconcile_graphs_task(ctx: dict) -> dict:
     """Scheduled self-heal for stories whose Neo4j projection is stale.
 
@@ -72,6 +86,38 @@ async def reconcile_graphs_task(ctx: dict) -> dict:
     result = await graph_service.reconcile_stale_graphs(limit=50)
     if result.get("reconciled"):
         log.info("graph reconcile healed %s stories", result["reconciled"])
+    return result
+
+
+async def prune_auth_and_drafts_task(ctx: dict) -> dict:
+    """Daily hygiene for rows that otherwise grow without bound.
+
+    - refresh_tokens: expired > 7 days ago, or revoked > 30 days ago
+    - flow_drafts: approved > 30 days ago (the work is already a chapter)
+    """
+    now = datetime.now(timezone.utc)
+    async with SessionLocal() as db:
+        tokens = await db.execute(
+            delete(RefreshToken).where(
+                or_(
+                    RefreshToken.expires_at < now - timedelta(days=7),
+                    and_(
+                        RefreshToken.revoked.is_(True),
+                        RefreshToken.created_at < now - timedelta(days=30),
+                    ),
+                )
+            )
+        )
+        drafts = await db.execute(
+            delete(FlowDraft).where(
+                FlowDraft.approved_at.is_not(None),
+                FlowDraft.approved_at < now - timedelta(days=30),
+            )
+        )
+        await db.commit()
+    result = {"refresh_tokens": tokens.rowcount or 0, "flow_drafts": drafts.rowcount or 0}
+    if any(result.values()):
+        log.info("pruned operational rows: %s", result)
     return result
 
 
@@ -87,12 +133,14 @@ async def prune_idempotency_task(ctx: dict) -> dict:
 
 
 class WorkerSettings:
-    functions = [export_pdf_task, export_epub_task]
+    functions = [export_pdf_task, export_epub_task, reproject_story_task]
     cron_jobs = [
         # Every 5 minutes, repair any drifted Neo4j projections (graph self-heal).
         cron(reconcile_graphs_task, minute=set(range(0, 60, 5))),
         # Daily at 03:17, prune stale idempotency rows.
         cron(prune_idempotency_task, hour={3}, minute={17}),
+        # Daily at 03:47, prune expired refresh tokens + old approved drafts.
+        cron(prune_auth_and_drafts_task, hour={3}, minute={47}),
     ]
     # Read REDIS_URL from config — `RedisSettings()` alone defaults to localhost,
     # so the worker would connect nowhere in the standard compose topology.

@@ -76,7 +76,7 @@ def clean_response(text: str) -> str:
 
 class OpenAICompatibleProvider(LLMProvider):
     def __init__(self, preset: Preset, *, base_url: str, model: str, embed_model: str, api_key: str,
-                 revalidate_base_url: bool = False):
+                 revalidate_base_url: bool = False, allow_local_base_url: bool = False):
         self.preset = preset
         self.name = preset.name  # so llm_runs.provider stays meaningful
         self.api_key = api_key
@@ -88,6 +88,9 @@ class OpenAICompatibleProvider(LLMProvider):
         # must be re-checked for SSRF before each outbound call (DNS-rebind guard).
         # Preset/localhost base_urls are trusted and never re-validated.
         self._revalidate_base_url = revalidate_base_url
+        # Local-first presets (LM Studio / llama-server) legitimately point at
+        # loopback or a LAN box; skip the private-IP rejection for them.
+        self._allow_local_base_url = allow_local_base_url
 
     def _headers(self) -> dict:
         h = {"Content-Type": "application/json", **self.preset.extra_headers}
@@ -99,7 +102,7 @@ class OpenAICompatibleProvider(LLMProvider):
         """SSRF re-check before any outbound request to a user-supplied base_url."""
         if self._revalidate_base_url:
             from app.core.ssrf import assert_base_url_safe
-            assert_base_url_safe(self.base_url)
+            assert_base_url_safe(self.base_url, allow_local=self._allow_local_base_url)
 
     async def _resolve_model(self, requested: str | None) -> str:
         """Pick the model id to send. An explicit per-call `requested` wins. Else if

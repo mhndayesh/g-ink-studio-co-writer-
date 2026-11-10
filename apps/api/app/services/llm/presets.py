@@ -37,6 +37,20 @@ PRESETS: dict[str, Preset] = {
         supports_response_format=False,  # many local backends 400 on response_format
         no_max_tokens_sentinel=False,    # omit max_tokens entirely → LM Studio uses its own default
     ),
+    # Raw llama.cpp `llama-server` (OpenAI-compatible). Local-first, no key.
+    # Concurrency/KV/GPU placement live in the server's own config.env; the app
+    # only needs the endpoint and the model alias.
+    "llamacpp": Preset(
+        name="llamacpp",
+        transport="openai",
+        base_url="http://localhost:8080/v1",
+        default_model="local",
+        default_embed_model="",
+        auth="none",
+        can_embed=False,          # a chat GGUF does not serve /v1/embeddings
+        supports_response_format=False,
+        no_max_tokens_sentinel=False,
+    ),
     "openai": Preset(
         name="openai",
         transport="openai",

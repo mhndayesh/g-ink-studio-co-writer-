@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from typing import Optional
+from typing import Any, Optional
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -70,7 +70,7 @@ async def get_db() -> AsyncIterator[AsyncSession]:
 # Optional Redis client (used for caching and ARQ queue)
 # ---------------------------------------------------------------------------
 
-_redis: Optional[object] = None
+_redis: Optional[Any] = None
 
 
 def get_redis():
@@ -83,3 +83,13 @@ def get_redis():
         except ImportError:
             pass
     return _redis
+
+
+async def close_redis() -> None:
+    """Close the shared Redis client (called from the API lifespan on shutdown)."""
+    global _redis
+    if _redis is not None:
+        try:
+            await _redis.aclose()
+        finally:
+            _redis = None

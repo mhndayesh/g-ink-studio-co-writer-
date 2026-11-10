@@ -148,7 +148,7 @@ Settings → provider slots.
 | **Technical** | Structured extraction and filing |
 | **Embedding** | Graph-RAG vectors (Qdrant) |
 
-Providers: **LM Studio** (default, local), **OpenAI**, **Anthropic**, **OpenRouter**, **Google Gemini**. Keys encrypted at rest. Anthropic / OpenRouter → embedding falls back to local LM Studio (they have no embeddings API).
+Providers: **LM Studio** (default, local), **llama.cpp / llama-server** (local, OpenAI-compatible), **OpenAI**, **Anthropic**, **OpenRouter**, **Google Gemini**. Keys encrypted at rest. Anthropic / OpenRouter / llama-server → embedding falls back to local LM Studio (they have no embeddings API). See `infra/llama-server/` for the dual-AMD-GPU Vulkan setup.
 
 Every AI run is logged to `llm_runs` with provider, model, page, timing, and token counts — full audit trail.
 

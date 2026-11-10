@@ -10,15 +10,17 @@ from datetime import datetime, timezone
 from typing import Any
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
-    JSON,
     String,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -69,6 +71,10 @@ class User(Base):
     # = real unlimited owner). Read only when is_owner(user); rejected at write for
     # everyone else, so a stray value on a normal user has no effect.
     act_as_tier: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    __table_args__ = (
+        Index("uq_users_email_lower", func.lower(email), unique=True),
+    )
 
 
 class RefreshToken(Base):
@@ -290,6 +296,8 @@ class CharacterRelationship(Base):
     # updates in place, but the manual POST route could create duplicate edges.
     __table_args__ = (
         UniqueConstraint("story_id", "source_id", "target_id", name="uq_character_relationship_pair"),
+        Index("ix_character_relationships_source", "source_id"),
+        Index("ix_character_relationships_target", "target_id"),
     )
 
 
@@ -315,6 +323,7 @@ class Chapter(Base):
 
     story: Mapped[Story] = relationship("Story", back_populates="chapters")
 
+    __table_args__ = (Index("ix_chapters_story_number", "story_id", "number"),)
     __mapper_args__ = {"version_id_col": version_id}
 
 
@@ -359,6 +368,8 @@ class Event(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     involved: Mapped[list[str]] = mapped_column(JSON, default=list)
 
+    __table_args__ = (Index("ix_events_chapter", "chapter_id"),)
+
 
 class PlotThread(Base):
     __tablename__ = "plot_threads"
@@ -397,6 +408,9 @@ class SceneCard(Base):
     # Optimistic-concurrency token (see Character.version_id).
     version_id: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
 
+    __table_args__ = (
+        Index("ix_scene_cards_story_chapter_ordinal", "story_id", "chapter_id", "ordinal"),
+    )
     __mapper_args__ = {"version_id_col": version_id}
 
 
@@ -415,6 +429,8 @@ class Revelation(Base):
     confidence: Mapped[float] = mapped_column(Float, default=1.0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    __table_args__ = (Index("ix_revelations_story_created", "story_id", "created_at"),)
+
 
 class PlotThreadSceneLink(Base):
     __tablename__ = "plot_thread_scene_links"
@@ -428,7 +444,11 @@ class PlotThreadSceneLink(Base):
     strength: Mapped[float] = mapped_column(Float, default=1.0)
     evidence: Mapped[str] = mapped_column(Text, default="")
 
-    __table_args__ = (UniqueConstraint("story_id", "thread_id", "scene_id", name="uq_thread_scene_link"),)
+    __table_args__ = (
+        UniqueConstraint("story_id", "thread_id", "scene_id", name="uq_thread_scene_link"),
+        Index("ix_thread_scene_links_thread", "thread_id"),
+        Index("ix_thread_scene_links_scene", "scene_id"),
+    )
 
 
 class CharacterVoiceProfile(Base):
@@ -448,7 +468,10 @@ class CharacterVoiceProfile(Base):
     stats: Mapped[dict] = mapped_column(JSON, default=dict)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
-    __table_args__ = (UniqueConstraint("story_id", "character_id", name="uq_voice_profile_story_character"),)
+    __table_args__ = (
+        UniqueConstraint("story_id", "character_id", name="uq_voice_profile_story_character"),
+        Index("ix_voice_profiles_character", "character_id"),
+    )
 
 
 # ── Character Voice Studio (Narrative Fidelity Engine) ─────────────────────────
@@ -483,7 +506,10 @@ class CharacterIdentity(Base):
     completeness: Mapped[dict] = mapped_column(JSON, default=dict)    # {core,behavioral,voice} 0-100 for UI
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
-    __table_args__ = (UniqueConstraint("story_id", "character_id", name="uq_identity_story_character"),)
+    __table_args__ = (
+        UniqueConstraint("story_id", "character_id", name="uq_identity_story_character"),
+        Index("ix_character_identities_character", "character_id"),
+    )
 
 
 class RelationshipMask(Base):
@@ -502,6 +528,11 @@ class RelationshipMask(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
+    __table_args__ = (
+        Index("ix_relationship_masks_character", "character_id"),
+        Index("ix_relationship_masks_audience", "audience_character_id"),
+    )
+
 
 class CharacterState(Base):
     """Layer 5 — temporary, scene-scoped condition. `kind` encodes the post-scene
@@ -518,6 +549,11 @@ class CharacterState(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    __table_args__ = (
+        Index("ix_character_states_character", "character_id"),
+        Index("ix_character_states_chapter", "chapter_id"),
+    )
 
 
 class PlaceIdentity(Base):
@@ -540,7 +576,10 @@ class PlaceIdentity(Base):
     symbolic_motif: Mapped[str] = mapped_column(String(255), default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
-    __table_args__ = (UniqueConstraint("story_id", "location_id", name="uq_place_identity_location"),)
+    __table_args__ = (
+        UniqueConstraint("story_id", "location_id", name="uq_place_identity_location"),
+        Index("ix_place_identities_location", "location_id"),
+    )
 
 
 class VoiceException(Base):
@@ -594,6 +633,8 @@ class ChapterScript(Base):
     visuals: Mapped[list[Any]] = mapped_column(JSON, default=list)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
+    __table_args__ = (Index("ix_chapter_scripts_chapter", "chapter_id"),)
+
 
 class FlowDraft(Base):
     __tablename__ = "flow_drafts"
@@ -607,6 +648,8 @@ class FlowDraft(Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+    __table_args__ = (Index("ix_flow_drafts_story_approved", "story_id", "approved_at"),)
 
 
 class StoryVersion(Base):
@@ -635,8 +678,14 @@ class ContinuityReport(Base):
 
 
 from app.db.publishing_models import (  # noqa: F401, E402
-    Publication, PublicationChapter, ReaderProfile,
-    ReadingProgress, StoryRating, Review, PrivateNote, PublicationFollow,
+    PrivateNote,
+    Publication,
+    PublicationChapter,
+    PublicationFollow,
+    ReaderProfile,
+    ReadingProgress,
+    Review,
+    StoryRating,
 )
 
 
@@ -662,6 +711,12 @@ class LLMRun(Base):
     #   "none"   → fallback/degraded or unbilled diagnostic (not metered)
     key_source: Mapped[str] = mapped_column(String(16), default="none", server_default="none", index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    # The entitlement meter runs COUNT/SUM over (user, key_source, window) on
+    # every AI call; this composite index keeps that off a table scan.
+    __table_args__ = (
+        Index("ix_llm_runs_user_keysource_created", "user_id", "key_source", "created_at"),
+    )
 
 
 class SiteSettings(Base):

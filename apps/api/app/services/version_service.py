@@ -6,7 +6,7 @@ backup JSON.
 """
 from __future__ import annotations
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -25,6 +25,11 @@ from app.db.models import (
     Theme,
     World,
 )
+
+# Each snapshot is a full copy of the manuscript. Keeping every approve forever
+# makes story_versions grow quadratically (chapter N copies all N chapters).
+# Retain a rolling window — enough for undo/backup, bounded on disk.
+STORY_VERSION_RETENTION = 25
 
 
 async def snapshot(db: AsyncSession, story_id: str, *, note: str = "") -> StoryVersion:
@@ -156,4 +161,15 @@ async def snapshot(db: AsyncSession, story_id: str, *, note: str = "") -> StoryV
     version = StoryVersion(story_id=story_id, version_no=int(last_no) + 1, snapshot=snap, note=note)
     db.add(version)
     await db.flush()
+
+    # Prune versions beyond the retention window. Bounds the quadratic growth of
+    # full-manuscript snapshots without changing the shape of any retained one.
+    cutoff = version.version_no - STORY_VERSION_RETENTION
+    if cutoff > 0:
+        await db.execute(
+            delete(StoryVersion).where(
+                StoryVersion.story_id == story_id,
+                StoryVersion.version_no <= cutoff,
+            )
+        )
     return version

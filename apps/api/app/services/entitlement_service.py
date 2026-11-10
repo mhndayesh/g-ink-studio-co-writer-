@@ -196,6 +196,16 @@ async def usage_summary(db: AsyncSession, user: User) -> dict:
             return None
         return max(0, cap - used)
 
+    # Reuse the usage row already fetched above. Calling authorize_ai() here
+    # issued the exact same COUNT/SUM a second time on every settings-page load.
+    if not metered:
+        ai_available = True
+    else:
+        assert usage is not None
+        over_actions = limit.max_actions is not None and usage.actions_used >= limit.max_actions
+        over_tokens = limit.max_tokens is not None and usage.tokens_used >= limit.max_tokens
+        ai_available = not (over_actions or over_tokens)
+
     return {
         "plan_tier": ent.plan_tier,
         "plan_status": ent.plan_status,
@@ -211,7 +221,7 @@ async def usage_summary(db: AsyncSession, user: User) -> dict:
             "tokens_remaining": _remaining(usage.tokens_used, limit.max_tokens) if usage else None,
         },
         # Can this user run an AI action right now? (cheap pre-check for UI locks)
-        "ai_available": (await authorize_ai(db, user, "flow.polish")).allowed,
+        "ai_available": ai_available,
         # Owner-only "shape-shift": which tier the owner is currently viewing as
         # (None when not in test mode). `is_owner` is the REAL owner flag, kept
         # separate from `effective_tier` so owner-only UI persists while simulating.

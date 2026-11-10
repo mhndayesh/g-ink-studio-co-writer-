@@ -54,7 +54,16 @@ def _is_private(ip_str: str) -> bool:
         return True  # unparseable → treat as unsafe
 
 
-def validate_provider_base_url(url: str) -> str:
+_METADATA_IPS: frozenset[str] = frozenset({"169.254.169.254"})
+
+# Local-first providers: their whole point is a loopback/private endpoint
+# (LM Studio, llama-server). The user is configuring their own machine, so the
+# private-IP block is intentionally skipped for these presets — but metadata
+# endpoints stay blocked.
+LOCAL_PROVIDERS: frozenset[str] = frozenset({"lmstudio", "llamacpp"})
+
+
+def validate_provider_base_url(url: str, *, allow_local: bool = False) -> str:
     """Validate a user-supplied LLM provider base_url.
 
     Raises BadRequest with a safe message on any violation. Returns the
@@ -64,6 +73,7 @@ def validate_provider_base_url(url: str) -> str:
     - Must be http:// or https://
     - Host must not be a cloud metadata endpoint
     - Host must not resolve to a loopback / private / reserved IP
+      (unless allow_local=True, for local-first presets)
     - Must have a non-empty host
 
     Note: we do NOT enforce an allowlist — users may self-host OpenAI-compat
@@ -88,8 +98,8 @@ def validate_provider_base_url(url: str) -> str:
     if host.lower() in _BLOCKED_HOSTNAMES:
         raise BadRequest("That hostname is not allowed as a provider URL.")
 
-    # Block localhost / loopback by name.
-    if _LOCALHOST_RE.match(host):
+    # Block localhost / loopback by name unless this is a local-first preset.
+    if not allow_local and _LOCALHOST_RE.match(host):
         raise BadRequest(
             "localhost / loopback addresses are not allowed as provider URLs."
         )
@@ -110,8 +120,13 @@ def validate_provider_base_url(url: str) -> str:
         )
 
     for *_, sockaddr in resolved:
-        ip = sockaddr[0]
-        if _is_private(ip):
+        ip = str(sockaddr[0])
+        if ip in _METADATA_IPS:
+            raise BadRequest(
+                f"Provider host '{host}' resolves to a cloud metadata IP address "
+                "and cannot be used as an LLM provider URL."
+            )
+        if not allow_local and _is_private(ip):
             raise BadRequest(
                 f"Provider host '{host}' resolves to a private/internal IP address "
                 "and cannot be used as an LLM provider URL."
@@ -134,7 +149,7 @@ def validate_provider_base_url(url: str) -> str:
     return url
 
 
-def assert_base_url_safe(url: str) -> None:
+def assert_base_url_safe(url: str, *, allow_local: bool = False) -> None:
     """Request-time re-validation to shrink the DNS-rebinding TOCTOU window.
 
     The write-time check (validate_provider_base_url) can be defeated by a
@@ -143,6 +158,6 @@ def assert_base_url_safe(url: str) -> None:
     outbound request means an attacker must win a sub-millisecond race between
     this lookup and httpx's own connect-time lookup (which a caching stub
     resolver usually defeats). Raises BadRequest if the host now resolves into
-    private/metadata space. Only call this for USER-supplied URLs — trusted
-    preset localhost URLs (LM Studio) would be wrongly rejected."""
-    validate_provider_base_url(url)
+    private/metadata space. `allow_local=True` is used for local-first presets
+    (LM Studio / llama-server); metadata endpoints remain blocked."""
+    validate_provider_base_url(url, allow_local=allow_local)

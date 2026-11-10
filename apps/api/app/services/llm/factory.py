@@ -18,8 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.core.errors import ByokKeyMissing
-from app.core.ssrf import validate_provider_base_url
 from app.core.security import decrypt_secret
+from app.core.ssrf import LOCAL_PROVIDERS, validate_provider_base_url
 from app.db.models import User, UserLLMSettings
 from app.services.llm.anthropic_provider import AnthropicProvider
 from app.services.llm.base import LLMProvider
@@ -72,8 +72,9 @@ def build_provider(
     # (revalidate_base_url below).
     user_supplied_url = bool(base_url)
     effective_base_url = base_url or defaults["base_url"]
+    allow_local = provider in LOCAL_PROVIDERS
     if user_supplied_url:  # only validate user-supplied overrides (presets are trusted)
-        validate_provider_base_url(effective_base_url)
+        validate_provider_base_url(effective_base_url, allow_local=allow_local)
 
     if preset.transport == "anthropic":
         # Anthropic can't embed → give it a local LM Studio embed fallback.
@@ -91,6 +92,7 @@ def build_provider(
         embed_model=embed_model or defaults["embed_model"],
         api_key=resolved_key,
         revalidate_base_url=user_supplied_url,
+        allow_local_base_url=allow_local,
     )
 
 
@@ -110,6 +112,12 @@ def provider_defaults(provider: str) -> dict[str, str]:
             "model": s.lmstudio_model,
             "embed_model": s.lmstudio_embed_model,
             "api_key": "",
+        },
+        "llamacpp": {
+            "base_url": s.llamacpp_base_url,
+            "model": s.llamacpp_model,
+            "embed_model": "",
+            "api_key": s.llamacpp_api_key,
         },
         "openai": {
             "base_url": s.openai_base_url,

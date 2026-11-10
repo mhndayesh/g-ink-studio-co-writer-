@@ -23,7 +23,7 @@ Degradation is by *detail*, never by silently dropping the cast.
 """
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import (
@@ -177,6 +177,7 @@ async def build_story_context(
     include_entity_ids: bool = False,
     scene_character_ids: list[str] | None = None,
     scene_location_id: str | None = None,
+    meta: dict | None = None,
 ) -> str:
     """Return a compact Markdown context block for the story, capped at a budget.
 
@@ -197,53 +198,129 @@ async def build_story_context(
     budget = char_budget if char_budget is not None else CONTEXT_CHAR_BUDGET
 
     world = await db.get(World, story_id)
+    # Only load the columns each section actually renders. `chapters.content` is
+    # the big one: a 100-chapter manuscript is megabytes of prose, and the context
+    # only needs a 200-char fallback when the summary is empty. Pulling every full
+    # body on every polish/extract/companion call was the single largest avoidable
+    # read in the AI path.
     characters = (
-        await db.execute(select(Character).where(Character.story_id == story_id).order_by(Character.created_at))
-    ).scalars().all()
-    chapters = (
-        await db.execute(select(Chapter).where(Chapter.story_id == story_id).order_by(Chapter.number))
-    ).scalars().all()
+        await db.execute(
+            select(
+                Character.id, Character.name, Character.role, Character.status,
+                Character.personality, Character.arc,
+            )
+            .where(Character.story_id == story_id)
+            .order_by(Character.created_at)
+        )
+    ).all()
+    if include_chapter_bodies:
+        chapters = (
+            await db.execute(select(Chapter).where(Chapter.story_id == story_id).order_by(Chapter.number))
+        ).scalars().all()
+    else:
+        chapters = (
+            await db.execute(
+                select(
+                    Chapter.id,
+                    Chapter.number,
+                    Chapter.title,
+                    Chapter.summary,
+                    func.substr(Chapter.content, 1, 200).label("content_excerpt"),
+                )
+                .where(Chapter.story_id == story_id)
+                .order_by(Chapter.number)
+            )
+        ).all()
     locations = (
-        await db.execute(select(Location).where(Location.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(Location.id, Location.name, Location.description)
+            .where(Location.story_id == story_id)
+        )
+    ).all()
     factions = (
-        await db.execute(select(Faction).where(Faction.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(Faction.id, Faction.name, Faction.description)
+            .where(Faction.story_id == story_id)
+        )
+    ).all()
     themes = (
-        await db.execute(select(Theme).where(Theme.story_id == story_id))
-    ).scalars().all()
+        await db.execute(select(Theme.id, Theme.name).where(Theme.story_id == story_id))
+    ).all()
     threads = (
-        await db.execute(select(PlotThread).where(PlotThread.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(PlotThread.id, PlotThread.name, PlotThread.status, PlotThread.description)
+            .where(PlotThread.story_id == story_id)
+        )
+    ).all()
     scenes = (
-        await db.execute(select(SceneCard).where(SceneCard.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(
+                SceneCard.id, SceneCard.chapter_id, SceneCard.ordinal, SceneCard.title,
+                SceneCard.beat, SceneCard.summary, SceneCard.goal, SceneCard.conflict,
+                SceneCard.outcome, SceneCard.time_sort_key, SceneCard.time_anchor,
+                SceneCard.pov_character_id, SceneCard.location_id, SceneCard.plot_thread_ids,
+            ).where(SceneCard.story_id == story_id)
+        )
+    ).all()
     revelations = (
-        await db.execute(select(Revelation).where(Revelation.story_id == story_id).order_by(Revelation.created_at))
-    ).scalars().all()
+        await db.execute(
+            select(
+                Revelation.id, Revelation.chapter_id, Revelation.description,
+                Revelation.characters_who_know, Revelation.reader_knows,
+            )
+            .where(Revelation.story_id == story_id)
+            .order_by(Revelation.created_at)
+        )
+    ).all()
     relationships = (
-        await db.execute(select(CharacterRelationship).where(CharacterRelationship.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(
+                CharacterRelationship.source_id, CharacterRelationship.target_id,
+                CharacterRelationship.type, CharacterRelationship.description,
+            ).where(CharacterRelationship.story_id == story_id)
+        )
+    ).all()
     voice_profiles = (
-        await db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(
+                CharacterVoiceProfile.character_id, CharacterVoiceProfile.sample_count,
+                CharacterVoiceProfile.avg_sentence_words, CharacterVoiceProfile.question_rate,
+                CharacterVoiceProfile.exclamation_rate, CharacterVoiceProfile.vocabulary_variety,
+            ).where(CharacterVoiceProfile.story_id == story_id)
+        )
+    ).all()
     # Voice Studio (Narrative Fidelity Engine) — rich identity layers.
     identities = (
-        await db.execute(select(CharacterIdentity).where(CharacterIdentity.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(
+                CharacterIdentity.character_id, CharacterIdentity.core_personality,
+                CharacterIdentity.behavioral_patterns, CharacterIdentity.voice_fingerprint,
+            ).where(CharacterIdentity.story_id == story_id)
+        )
+    ).all()
     masks = (
-        await db.execute(select(RelationshipMask).where(RelationshipMask.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(
+                RelationshipMask.character_id, RelationshipMask.audience_character_id,
+                RelationshipMask.audience_label, RelationshipMask.speech_style,
+                RelationshipMask.tells,
+            ).where(RelationshipMask.story_id == story_id)
+        )
+    ).all()
     states = (
         await db.execute(
-            select(CharacterState).where(
-                CharacterState.story_id == story_id, CharacterState.active.is_(True)
-            )
+            select(CharacterState.character_id, CharacterState.label, CharacterState.detail)
+            .where(CharacterState.story_id == story_id, CharacterState.active.is_(True))
         )
-    ).scalars().all()
+    ).all()
     place_identities = (
-        await db.execute(select(PlaceIdentity).where(PlaceIdentity.story_id == story_id))
-    ).scalars().all()
+        await db.execute(
+            select(
+                PlaceIdentity.location_id, PlaceIdentity.atmosphere,
+                PlaceIdentity.sensory_palette, PlaceIdentity.symbolic_motif,
+            ).where(PlaceIdentity.story_id == story_id)
+        )
+    ).all()
     char_by_id = {c.id: c.name for c in characters}
     loc_by_id = {loc.id: loc.name for loc in locations}
     chapter_by_id = {ch.id: ch for ch in chapters}
@@ -472,7 +549,8 @@ async def build_story_context(
             block.append(f"(… {omitted} earlier chapter(s) omitted; most recent shown)")
         for ch in shown:
             head = f"Ch{ch.number}. {ch.title or '(untitled)'}"
-            summary = _trim(ch.summary or ch.content[:200], 200)
+            fallback = ch.content[:200] if include_chapter_bodies else (getattr(ch, "content_excerpt", "") or "")
+            summary = _trim(ch.summary or fallback, 200)
             block.append(f"- {head} — {summary}")
             if include_chapter_bodies:
                 block.append(_trim(ch.content, 1500))
@@ -555,5 +633,10 @@ async def build_story_context(
     if extra_graph_block:
         block = ["# GRAPH CONTEXT", extra_graph_block.strip()]
         sections.append((_P_GRAPH, block))
+
+    if meta is not None:
+        # Reuse the character rows already fetched above instead of issuing the
+        # same SELECT again in `extract()` just to resolve is_new / character_id.
+        meta["characters"] = characters
 
     return _pack(sections, budget)

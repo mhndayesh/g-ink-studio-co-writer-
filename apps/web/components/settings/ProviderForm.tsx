@@ -5,10 +5,10 @@ import { CheckCircle2, XCircle, KeyRound, ListChecks } from "lucide-react";
 import * as api from "@/lib/api";
 import { Btn, FG, Inp, Sel } from "@/components/ui/Primitives";
 
-export type Provider = "lmstudio" | "openai" | "anthropic" | "openrouter" | "gemini" | "deepseek";
+export type Provider = "lmstudio" | "llamacpp" | "openai" | "anthropic" | "openrouter" | "gemini" | "deepseek";
 
 // Providers that cannot produce embeddings — mirrors the backend EMBED_CAPABLE.
-export const EMBED_INCAPABLE: Provider[] = ["anthropic", "openrouter", "deepseek"];
+export const EMBED_INCAPABLE: Provider[] = ["anthropic", "openrouter", "deepseek", "llamacpp"];
 
 export type ProviderValue = {
   provider: Provider;
@@ -21,6 +21,7 @@ export type ProviderValue = {
 
 export const PROVIDER_DEFAULTS: Record<Provider, { base_url: string; model: string; embed_model: string }> = {
   lmstudio:   { base_url: "http://localhost:1234/v1", model: "local-model", embed_model: "nomic-embed-text-v1.5" },
+  llamacpp:   { base_url: "http://localhost:8080/v1", model: "local", embed_model: "" },
   openai:     { base_url: "https://api.openai.com/v1", model: "gpt-4o-mini", embed_model: "text-embedding-3-small" },
   anthropic:  { base_url: "", model: "claude-sonnet-4-5", embed_model: "" },
   openrouter: { base_url: "https://openrouter.ai/api/v1", model: "openai/gpt-4o-mini", embed_model: "" },
@@ -30,6 +31,7 @@ export const PROVIDER_DEFAULTS: Record<Provider, { base_url: string; model: stri
 
 const PROVIDER_LABELS: Record<Provider, string> = {
   lmstudio: "LM Studio (local)",
+  llamacpp: "llama.cpp / llama-server (local)",
   openai: "OpenAI",
   anthropic: "Anthropic",
   openrouter: "OpenRouter",
@@ -129,7 +131,7 @@ export function ProviderForm({
         )}
       </div>
 
-      {value.provider !== "lmstudio" && (
+      {value.provider !== "lmstudio" && value.provider !== "llamacpp" && (
         <FG label="API key" hint="Encrypted at rest. Leave blank to keep the current one.">
           <div className="relative">
             <KeyRound size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-text3"/>

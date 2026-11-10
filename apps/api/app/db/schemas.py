@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
 
 class APIResponse(BaseModel):
@@ -702,8 +702,15 @@ class GraphView(BaseModel):
 
 # ── LLM Settings ────────────────────────────────────────────────────────
 
-ProviderName = Literal["lmstudio", "openai", "anthropic", "openrouter", "gemini", "deepseek"]
+ProviderName = Literal["lmstudio", "llamacpp", "openai", "anthropic", "openrouter", "gemini", "deepseek"]
 LaneName = Literal["creative", "technical", "embedding"]
+
+
+def _validate_provider_url(provider: str | None, url: str) -> str:
+    """SSRF-check a lane URL. Local-first presets may point at loopback/LAN."""
+    from app.core.ssrf import LOCAL_PROVIDERS, validate_provider_base_url
+
+    return validate_provider_base_url(url, allow_local=(provider in LOCAL_PROVIDERS))
 
 
 class LaneConfigIn(BaseModel):
@@ -713,11 +720,10 @@ class LaneConfigIn(BaseModel):
     embed_model: str = ""
     api_key: str = ""  # plaintext on the wire; blank = keep existing
 
-    @field_validator("base_url")
-    @classmethod
-    def _no_ssrf(cls, v: str) -> str:
-        from app.core.ssrf import validate_provider_base_url
-        return validate_provider_base_url(v)
+    @model_validator(mode="after")
+    def _no_ssrf(self):
+        self.base_url = _validate_provider_url(self.provider, self.base_url)
+        return self
 
 
 class LaneConfigOut(BaseModel):
@@ -764,11 +770,10 @@ class HouseConfigIn(BaseModel):
     embed_model: str = ""
     api_key: str = ""  # plaintext on the wire; blank = keep the stored key
 
-    @field_validator("base_url")
-    @classmethod
-    def _no_ssrf(cls, v: str) -> str:
-        from app.core.ssrf import validate_provider_base_url
-        return validate_provider_base_url(v)
+    @model_validator(mode="after")
+    def _no_ssrf(self):
+        self.base_url = _validate_provider_url(self.provider, self.base_url)
+        return self
 
 
 class CapsIn(BaseModel):

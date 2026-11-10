@@ -9,7 +9,12 @@ import os
 # Point at an in-memory SQLite (works with aiosqlite) BEFORE app modules are imported.
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///./test_gink.db")
 os.environ.setdefault("JWT_SECRET", "test_secret_at_least_32_chars_long_xxxxxxxxx")
+# Fixed, non-secret Fernet key so BYOK encryption paths work in tests. (This is
+# test-only; production reads the real key from the environment.)
+os.environ.setdefault("LLM_KEY_ENCRYPTION_KEY", "7oEA7i-xcNgq6onsHg1oGukGqfMhzgFT_fcRTAX8LvE=")
 os.environ.setdefault("LLM_PROVIDER", "lmstudio")
+os.environ.setdefault("SYSTEM_LLM_PROVIDER", "lmstudio")
+os.environ.setdefault("LLAMACPP_BASE_URL", "http://localhost:8080/v1")
 os.environ.setdefault("LMSTUDIO_BASE_URL", "http://127.0.0.1:65535/v1")  # guaranteed-unreachable port
 os.environ.setdefault("CORS_ORIGINS", "http://localhost:3000")
 # The suite authenticates via the email+password endpoints (/v1/auth/signup|login).

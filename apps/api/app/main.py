@@ -11,7 +11,6 @@ from sqlalchemy import text
 from app.core.config import get_settings
 from app.core.errors import AppError, envelope_err
 
-
 # ---------------------------------------------------------------------------
 # Structured JSON logging
 # ---------------------------------------------------------------------------
@@ -65,6 +64,16 @@ async def lifespan(app: FastAPI):
         await embedding_service.close_client()
     except Exception:
         log.warning("Qdrant client close failed", exc_info=True)
+    try:
+        from app.workers.pool import close_pool
+        await close_pool()
+    except Exception:
+        log.warning("ARQ pool close failed", exc_info=True)
+    try:
+        from app.db.session import close_redis
+        await close_redis()
+    except Exception:
+        log.warning("Redis client close failed", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -92,9 +101,9 @@ def create_app() -> FastAPI:
 
     # ── Security + size middleware ───────────────────────────────────────────
     from app.core.middleware import (
-        SecurityHeadersMiddleware,
-        RequestSizeLimitMiddleware,
         RequestBodyTooLarge,
+        RequestSizeLimitMiddleware,
+        SecurityHeadersMiddleware,
     )
     app.add_middleware(SecurityHeadersMiddleware)
     app.add_middleware(RequestSizeLimitMiddleware, max_bytes=s.max_request_body_mb * 1024 * 1024)
@@ -195,9 +204,28 @@ def create_app() -> FastAPI:
 
     # ── Existing routers ──────────────────────────────────────────────────
     from app.api.v1 import (
-        auth, stories, world, characters, chapters, flow, story_check,
-        graph, rag, llm, locations, factions, scenes, threads, narrative, versions, export,
-        profile, billing, admin, identity, observer,
+        admin,
+        auth,
+        billing,
+        chapters,
+        characters,
+        export,
+        factions,
+        flow,
+        graph,
+        identity,
+        llm,
+        locations,
+        narrative,
+        observer,
+        profile,
+        rag,
+        scenes,
+        stories,
+        story_check,
+        threads,
+        versions,
+        world,
     )
 
     app.include_router(auth.router,        prefix="/v1/auth",    tags=["auth"])
@@ -224,11 +252,11 @@ def create_app() -> FastAPI:
     app.include_router(profile.router,     prefix="/v1/u",       tags=["profile"])
 
     # ── Publishing platform routers ────────────────────────────────────────
-    from app.routers.publishing import router as publishing_router
-    from app.routers.reader     import reader_router
-    from app.routers.social     import social_router
     from app.routers.export_pub import export_router as pub_export_router
-    from app.routers.inbox      import inbox_router
+    from app.routers.inbox import inbox_router
+    from app.routers.publishing import router as publishing_router
+    from app.routers.reader import reader_router
+    from app.routers.social import social_router
 
     app.include_router(publishing_router, prefix="/v1/publish", tags=["publishing"])
     app.include_router(reader_router,     prefix="/v1/read",    tags=["reader"])
@@ -241,13 +269,14 @@ def create_app() -> FastAPI:
     app.include_router(export_async_router, prefix="/v1/export", tags=["export-async"])
 
     # ── Uploads + notifications ────────────────────────────────────────────
-    from app.api.v1 import uploads, notifications
+    from app.api.v1 import notifications, uploads
     app.include_router(uploads.router,       prefix="/v1/uploads",       tags=["uploads"])
     app.include_router(notifications.router, prefix="/v1/notifications", tags=["notifications"])
 
     # Serve uploaded cover images (same-origin, so the reader CSP's img-src 'self'
     # covers them). Mounted on a distinct path from the upload route above.
     from fastapi.staticfiles import StaticFiles
+
     from app.services import storage_service
     app.mount("/v1/media", StaticFiles(directory=str(storage_service.resolve_upload_dir())), name="media")
 

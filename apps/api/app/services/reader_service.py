@@ -5,19 +5,23 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import func, select, update, and_
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound
 from app.db.models import Story, User
 from app.db.publishing_models import (
-    Publication, PublicationChapter, ReadingProgress,
-    PublicationFollow, StoryRating,
+    Publication,
+    PublicationChapter,
+    PublicationFollow,
+    ReadingProgress,
+    StoryRating,
 )
 from app.db.publishing_schemas import (
-    ProgressUpdate, PublicationSummary, DiscoveryFeedResponse,
+    DiscoveryFeedResponse,
+    ProgressUpdate,
+    PublicationSummary,
 )
-
 
 # ---------------------------------------------------------------------------
 # Discovery feed
@@ -41,11 +45,38 @@ async def get_discovery_feed(
     per_page = min(per_page, 50)
     offset = (page - 1) * per_page
 
+    # Correlated aggregates keep the feed at ONE query instead of 2 per item
+    # (a 20-item page used to issue 40 extra round-trips).
+    chapter_count_sq = (
+        select(func.count(PublicationChapter.id))
+        .where(
+            PublicationChapter.publication_id == Publication.id,
+            PublicationChapter.is_latest.is_(True),
+        )
+        .correlate(Publication)
+        .scalar_subquery()
+    )
+    rating_avg_sq = (
+        select(func.avg(StoryRating.overall))
+        .where(StoryRating.publication_id == Publication.id)
+        .correlate(Publication)
+        .scalar_subquery()
+    )
+    rating_count_sq = (
+        select(func.count(StoryRating.id))
+        .where(StoryRating.publication_id == Publication.id)
+        .correlate(Publication)
+        .scalar_subquery()
+    )
+
     q = (
         select(
             Publication,
             Story.title.label("story_title"),
             User.display_name.label("author_name"),
+            chapter_count_sq.label("chapter_count"),
+            rating_avg_sq.label("avg_rating"),
+            rating_count_sq.label("rating_count"),
         )
         .join(Story, Story.id == Publication.story_id)
         .join(User,  User.id == Publication.user_id)
@@ -69,6 +100,10 @@ async def get_discovery_feed(
 
     if sort == "popular":
         q = q.order_by(Publication.view_count.desc(), Publication.published_at.desc())
+    elif sort == "rating":
+        # Sort the WHOLE feed by rating, not just the fetched page (the old
+        # Python sort only reordered the 20 rows already selected).
+        q = q.order_by(func.coalesce(rating_avg_sq, 0).desc(), Publication.published_at.desc())
     else:
         q = q.order_by(Publication.published_at.desc())
 
@@ -78,24 +113,7 @@ async def get_discovery_feed(
     rows = (await db.execute(q.offset(offset).limit(per_page))).all()
 
     items = []
-    for pub, story_title, author_name in rows:
-        chapter_count = (await db.execute(
-            select(func.count()).where(
-                and_(
-                    PublicationChapter.publication_id == pub.id,
-                    PublicationChapter.is_latest == True,  # noqa: E712
-                )
-            )
-        )).scalar_one()
-
-        agg = (await db.execute(
-            select(
-                func.avg(StoryRating.overall).label("avg"),
-                func.count(StoryRating.id).label("cnt"),
-            )
-            .where(StoryRating.publication_id == pub.id)
-        )).one()
-
+    for pub, story_title, author_name, chapter_count, avg_rating, rating_count in rows:
         items.append(PublicationSummary(
             id=pub.id,
             slug=pub.slug,
@@ -111,13 +129,10 @@ async def get_discovery_feed(
             status=pub.status,
             view_count=pub.view_count,
             published_at=pub.published_at,
-            total_chapters=chapter_count,
-            avg_rating=round(float(agg.avg), 2) if agg.avg else None,
-            rating_count=agg.cnt or 0,
+            total_chapters=int(chapter_count or 0),
+            avg_rating=round(float(avg_rating), 2) if avg_rating is not None else None,
+            rating_count=int(rating_count or 0),
         ))
-
-    if sort == "rating":
-        items.sort(key=lambda x: (x.avg_rating or 0), reverse=True)
 
     return DiscoveryFeedResponse(
         items=items,
