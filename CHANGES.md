@@ -4,6 +4,16 @@ Every change lands here as it is made — what, and why. Newest first.
 
 ---
 
+## 2026-11-11 — Committed the session work
+
+- `a9b1056` chore(repo): shrink checkout, drop stale docs, add ticket log (T-001, T-002, T-003)
+- `955ab49` fix(api): declare SQLAlchemy[asyncio], pin ruff below 0.7 (T-004)
+- `ce6d78e` feat: authoring lifecycle — revisions, notes, search, real word counts, async
+  post-approve (T-005)
+- `RUN.md`: kept the pre-existing edit in the working tree (migration head 0022 -> 0023) and
+  committed it rather than discarding it. Why: it was correct, and `CONTRIBUTING.md` now says
+  the same thing.
+
 ## 2026-11-11 — API packaging: declare greenlet, pin ruff (T-004)
 
 - `apps/api/pyproject.toml`: `SQLAlchemy>=2.0.0` -> `SQLAlchemy[asyncio]>=2.0.0`.

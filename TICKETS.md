@@ -19,17 +19,6 @@ Never delete a ticket. Only one ticket may be FIXING at a time.
 
 ## Open
 
-### T-005 — Commit the uncommitted authoring-lifecycle work
-- **Status:** OPEN
-- **Opened:** 2026-11-11
-- **Area:** `apps/api` (28 files) + `apps/web` (18 files), untracked: `workspace.py`,
-  `post_approve.py`, `revision_service.py`, `text_stats.py`, migration `0023`, `notes/`, `search/`
-- **Problem:** 46 modified + 9 untracked paths sitting uncommitted on `main`. Not reviewable,
-  not backed up, and a `git checkout .` would destroy it. Ready to commit — evidence is in
-  T-004's resolution (API tests green, web lint/typecheck/build green).
-- **Resolution:** (filled at close)
-- **Docs to update:** (filled at close)
-
 ### T-006 — Railway deploy configs orphaned after RAILWAY.md removal
 - **Status:** OPEN
 - **Opened:** 2026-11-11
@@ -45,6 +34,20 @@ Never delete a ticket. Only one ticket may be FIXING at a time.
 _none_
 
 ## Closed
+
+### T-005 — Commit the uncommitted authoring-lifecycle work
+- **Status:** CLOSED
+- **Opened:** 2026-11-11
+- **Area:** `apps/api` (28 files) + `apps/web` (18 files), untracked: `workspace.py`,
+  `post_approve.py`, `revision_service.py`, `text_stats.py`, migration `0023`, `notes/`, `search/`
+- **Problem:** 46 modified + 9 untracked paths sitting uncommitted on `main`. Not reviewable,
+  not backed up, and a `git checkout .` would destroy it.
+- **Resolution:** Committed as **ce6d78e** after the verification in T-004 came back green
+  (pytest 111 passed, ruff clean, web lint/tsc/build exit 0). The pre-existing `RUN.md` edit
+  (migration head 0022 -> 0023) was kept and committed alongside rather than discarded. Scan of
+  the incoming diff found no `console.log`, `print(`, `pdb` or `breakpoint()` leftovers.
+  Working tree is now clean. Commit ref: `ce6d78e` (+ `RUN.md` in the close-out commit).
+- **Docs to update:** none — `RUN.md` and `CONTRIBUTING.md` both now state head 0023 correctly.
 
 ### T-004 — Fresh install cannot run the CI job: greenlet missing, ruff unpinned
 - **Status:** CLOSED
