@@ -1,8 +1,8 @@
 "use client";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, Trash2, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { Btn, Card, FG, Inp, PageHdr, QueryError, Sel, Ta, Tag } from "@/components/ui/Primitives";
 import { useDebouncedSave } from "@/lib/debounce";
@@ -49,6 +49,12 @@ const COPY = {
     noRevelations: "No revelations on this scene.",
     chapterShort: "Ch",
     deleteRevelationAria: "Delete revelation",
+    saving: "Saving…",
+    saved: "Saved",
+    saveFailed: "Save failed — retrying on next edit",
+    moveUp: "Move up",
+    moveDown: "Move down",
+    toggleReader: "Toggle whether the reader knows this",
   },
   ar: {
     title: "بطاقات المشاهد",
@@ -88,6 +94,12 @@ const COPY = {
     noRevelations: "لا توجد كشوفات في هذا المشهد.",
     chapterShort: "ف",
     deleteRevelationAria: "حذف الكشف",
+    saving: "جارٍ الحفظ…",
+    saved: "تم الحفظ",
+    saveFailed: "فشل الحفظ — ستتم إعادة المحاولة عند التعديل التالي",
+    moveUp: "نقل لأعلى",
+    moveDown: "نقل لأسفل",
+    toggleReader: "تبديل معرفة القارئ بهذا الكشف",
   },
 } as const;
 
@@ -108,11 +120,20 @@ export default function ScenesPage() {
   const { data: threads } = useQuery({ queryKey: ["threads", storyId], queryFn: () => api.listThreads(storyId) });
   const { data: revelations } = useQuery({ queryKey: ["revelations", storyId], queryFn: () => api.listRevelations(storyId) });
 
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [activeId, setActiveId] = useState<string | null>(null);
+  useEffect(() => {
+    const fromUrl = searchParams.get("scene");
+    if (fromUrl) setActiveId(fromUrl);
+  }, [searchParams]);
   useEffect(() => { if (!activeId && scenes && scenes.length > 0) setActiveId(scenes[0].id); }, [activeId, scenes]);
   const active = useMemo(() => scenes?.find((s: any) => s.id === activeId) || null, [scenes, activeId]);
   const [draft, setDraft] = useState<any>(null);
-  useEffect(() => { setDraft(active ? { ...active, sensory_palette: active.sensory_palette || {} } : null); }, [active]);
+  useEffect(() => {
+    if (active && active.id === activeId) setDraft({ ...active, sensory_palette: active.sensory_palette || {} });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, active?.id]);
 
   const create = useMutation({
     mutationFn: () => api.createScene(storyId, { title: c.defaultTitle, beat: "", content: "", ordinal: (scenes?.length || 0) + 1 }),
@@ -120,7 +141,7 @@ export default function ScenesPage() {
       qc.invalidateQueries({ queryKey: ["scenes", storyId] });
       qc.invalidateQueries({ queryKey: ["timeline", storyId] });
       qc.invalidateQueries({ queryKey: ["weave", storyId] });
-      setActiveId(s.id);
+      selectScene(s.id);
     },
   });
   const patch = useMutation({
@@ -141,11 +162,38 @@ export default function ScenesPage() {
     },
   });
 
-  useDebouncedSave(draft, 800, (d) => {
+  const move = useMutation({
+    mutationFn: async ({ id, dir }: { id: string; dir: -1 | 1 }) => {
+      const target = (scenes || []).find((s: any) => s.id === id);
+      if (!target) return;
+      const siblings = (scenes || [])
+        .filter((s: any) => (s.chapter_id || null) === (target.chapter_id || null))
+        .sort((a: any, b: any) => (a.ordinal || 0) - (b.ordinal || 0));
+      const i = siblings.findIndex((s: any) => s.id === id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= siblings.length) return;
+      const a = siblings[i], b = siblings[j];
+      await api.patchScene(storyId, a.id, { ordinal: b.ordinal || j + 1 });
+      await api.patchScene(storyId, b.id, { ordinal: a.ordinal || i + 1 });
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["scenes", storyId] });
+      qc.invalidateQueries({ queryKey: ["timeline", storyId] });
+      qc.invalidateQueries({ queryKey: ["weave", storyId] });
+    },
+  });
+
+  const { status: saveStatus, flush } = useDebouncedSave(draft, 800, (d) => {
     if (!d || !activeId) return;
     const { id, story_id, ...patchable } = d;
     patch.mutate(patchable);
-  });
+  }, activeId ?? "none");
+
+  function selectScene(id: string) {
+    flush();
+    setActiveId(id);
+    router.replace(`/studio/${storyId}/scenes?scene=${id}`, { scroll: false });
+  }
 
   const [revText, setRevText] = useState("");
   const addRev = useMutation({
@@ -159,6 +207,10 @@ export default function ScenesPage() {
     mutationFn: (id: string) => api.deleteRevelation(storyId, id),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["revelations", storyId] }),
   });
+  const patchRev = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: any }) => api.patchRevelation(storyId, id, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["revelations", storyId] }),
+  });
 
   const sceneRevelations = (revelations || []).filter((r: any) => r.scene_id === activeId);
 
@@ -166,18 +218,22 @@ export default function ScenesPage() {
     <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-4 lg:gap-6 max-w-7xl">
       <aside>
         <PageHdr title={c.title} />
-        <Btn variant="primary" className="w-full mb-3" onClick={() => create.mutate()}><Plus size={14}/> {c.newScene}</Btn>
+        <Btn variant="primary" className="w-full mb-3" disabled={create.isPending} onClick={() => create.mutate()}><Plus size={14}/> {c.newScene}</Btn>
         {scenesError && <div className="mb-3"><QueryError error={scenesErr} retry={refetchScenes} what={c.what} /></div>}
         <ul className="space-y-1">
           {(scenes || []).map((s: any) => (
-            <li key={s.id}>
+            <li key={s.id} className="group flex items-center gap-1">
               <button
-                onClick={() => setActiveId(s.id)}
-                className={`w-full text-start px-3 py-2 rounded text-sm ${activeId === s.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}
+                onClick={() => selectScene(s.id)}
+                className={`flex-1 text-start px-3 py-2 rounded text-sm ${activeId === s.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}
               >
                 <span className="text-ink-text3 me-1">{formatNumber(s.ordinal || 0)}.</span>
                 {s.title || s.beat || s.summary || c.untitled}
               </button>
+              <span className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
+                <button aria-label={c.moveUp} disabled={move.isPending} onClick={() => move.mutate({ id: s.id, dir: -1 })} className="text-ink-text3 hover:text-ink-text disabled:opacity-30"><ArrowUp size={12}/></button>
+                <button aria-label={c.moveDown} disabled={move.isPending} onClick={() => move.mutate({ id: s.id, dir: 1 })} className="text-ink-text3 hover:text-ink-text disabled:opacity-30"><ArrowDown size={12}/></button>
+              </span>
             </li>
           ))}
         </ul>
@@ -189,7 +245,12 @@ export default function ScenesPage() {
           <>
             <PageHdr
               title={draft.title || draft.beat || c.scene}
-              subtitle={c.autosave}
+              subtitle={
+                saveStatus === "saving" ? c.saving
+                  : saveStatus === "error" ? c.saveFailed
+                    : saveStatus === "saved" ? c.saved
+                      : c.autosave
+              }
               right={<Btn variant="ghost" onClick={() => { if (confirm(c.deleteConfirm)) del.mutate(); }}><Trash2 size={14}/> {t("common.delete")}</Btn>}
             />
 
@@ -282,8 +343,14 @@ export default function ScenesPage() {
               <ul className="space-y-1">
                 {sceneRevelations.map((r: any) => (
                   <li key={r.id} className="flex items-center justify-between gap-2 text-sm py-1.5 px-2 rounded hover:bg-ink-surface2">
-                    <span>{r.description} <Tag color={r.reader_knows ? "gold" : "muted"}>{r.reader_knows ? c.readerKnows : c.hidden}</Tag></span>
-                    <button aria-label={c.deleteRevelationAria} onClick={() => delRev.mutate(r.id)} className="text-ink-text3 hover:text-ink-red"><X size={14}/></button>
+                    <span>{r.description} <button
+                      title={c.toggleReader}
+                      onClick={() => patchRev.mutate({ id: r.id, patch: { reader_knows: !r.reader_knows } })}
+                      className="align-middle"
+                    >
+                      <Tag color={r.reader_knows ? "gold" : "muted"}>{r.reader_knows ? c.readerKnows : c.hidden}</Tag>
+                    </button></span>
+                    <button aria-label={c.deleteRevelationAria} onClick={() => { if (confirm(c.deleteConfirm)) delRev.mutate(r.id); }} className="text-ink-text3 hover:text-ink-red"><X size={14}/></button>
                   </li>
                 ))}
                 {sceneRevelations.length === 0 && <li className="text-sm text-ink-text3">{c.noRevelations}</li>}

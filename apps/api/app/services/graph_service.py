@@ -10,6 +10,7 @@ front-end Story Map keeps working.
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -143,13 +144,24 @@ async def reproject_story(db: AsyncSession, story_id: str) -> dict[str, Any]:
                 rows=theme_rows, s=story_id,
             )
 
-            # Character-character relationships (dynamic type via APOC if present, else generic)
+            # Character-character relationships. Cypher cannot parameterise a
+            # relationship type, so sanitise + group by type: one round-trip per
+            # distinct type instead of one per relationship.
+            by_type: dict[str, list[dict]] = {}
             for r in rel_rows:
-                cypher = (
-                    "MATCH (a:Character {story_id: $s, id: $src}), (b:Character {story_id: $s, id: $dst}) "
-                    f"MERGE (a)-[rel:{r['type']}]->(b) SET rel.description = $desc"
+                rel_type = re.sub(r"[^A-Za-z0-9_]", "_", (r.get("type") or "RELATED")).upper()[:40]
+                if not rel_type:
+                    rel_type = "RELATED"
+                if rel_type[0].isdigit():
+                    rel_type = "R_" + rel_type
+                by_type.setdefault(rel_type, []).append(r)
+            for rel_type, rows in by_type.items():
+                await session.run(
+                    "UNWIND $rows AS r "
+                    "MATCH (a:Character {story_id: $s, id: r.src}), (b:Character {story_id: $s, id: r.dst}) "
+                    f"MERGE (a)-[rel:{rel_type}]->(b) SET rel.description = r.desc",
+                    rows=rows, s=story_id,
                 )
-                await session.run(cypher, s=story_id, src=r["src"], dst=r["dst"], desc=r["desc"])
 
             # APPEARS_IN edges
             appear_rows = []

@@ -2,7 +2,7 @@
 import { useParams } from "next/navigation";
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, X } from "lucide-react";
+import { Plus, Pencil, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { Btn, Card, FG, Inp, PageHdr, QueryError, Sel, Ta, Tag } from "@/components/ui/Primitives";
 import { useI18n } from "@/lib/i18n";
@@ -26,6 +26,10 @@ const COPY = {
     sceneLabel: "Scene {n}",
     cellStatus: { touch: "touch", setup: "setup", turn: "turn", payoff: "payoff" },
     deleteAria: "Delete plot thread",
+    editAria: "Edit plot thread",
+    save: "Save",
+    cancel: "Cancel",
+    deleteConfirm: "Delete this plot thread?",
   },
   ar: {
     title: "خيوط الحبكة",
@@ -43,6 +47,10 @@ const COPY = {
     sceneLabel: "مشهد {n}",
     cellStatus: { touch: "ظهور", setup: "تأسيس", turn: "تحوّل", payoff: "حصاد" },
     deleteAria: "حذف خيط الحبكة",
+    editAria: "تعديل خيط الحبكة",
+    save: "حفظ",
+    cancel: "إلغاء",
+    deleteConfirm: "هل تريد حذف خيط الحبكة؟",
   },
 } as const;
 
@@ -77,6 +85,30 @@ export default function ThreadsPage() {
       qc.invalidateQueries({ queryKey: ["weave", storyId] });
     },
   });
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editStatus, setEditStatus] = useState("open");
+  const edit = useMutation({
+    mutationFn: (id: string) => api.patchThread(storyId, id, {
+      name: editName,
+      description: editDescription,
+      status: editStatus,
+    }),
+    onSuccess: () => {
+      setEditingId(null);
+      qc.invalidateQueries({ queryKey: ["threads", storyId] });
+      qc.invalidateQueries({ queryKey: ["weave", storyId] });
+    },
+  });
+
+  function startEdit(thread: any) {
+    setEditingId(thread.id);
+    setEditName(thread.name || "");
+    setEditDescription(thread.description || "");
+    setEditStatus(thread.status || "open");
+  }
 
   return (
     <div className="max-w-6xl">
@@ -138,13 +170,34 @@ export default function ThreadsPage() {
       <ul className="space-y-2">
         {(data || []).map((thread: any) => (
           <li key={thread.id}>
-            <Card className="flex items-start justify-between gap-2">
-              <div>
-                <div className="flex items-center gap-2 mb-1"><h3 className="font-display text-lg">{thread.name}</h3><Tag color={thread.status === "paid_off" ? "green" : thread.status === "abandoned" ? "muted" : "gold"}>{statusLabel(thread.status)}</Tag></div>
-                <p className="text-sm text-ink-text2">{thread.description}</p>
-              </div>
-              <button aria-label={c.deleteAria} onClick={() => del.mutate(thread.id)} className="text-ink-text3 hover:text-ink-red"><X size={16}/></button>
-            </Card>
+            {editingId === thread.id ? (
+              <Card>
+                <div className="grid gap-3 md:grid-cols-[1fr_180px]">
+                  <FG label={c.name}><Inp value={editName} onChange={e => setEditName(e.target.value)} /></FG>
+                  <FG label={c.status}>
+                    <Sel value={editStatus} onChange={e => setEditStatus(e.target.value)}>
+                      {STATUSES.map(s => <option key={s} value={s}>{statusLabel(s)}</option>)}
+                    </Sel>
+                  </FG>
+                </div>
+                <FG label={c.description}><Ta value={editDescription} onChange={e => setEditDescription(e.target.value)} /></FG>
+                <div className="flex justify-end gap-2">
+                  <Btn variant="ghost" onClick={() => setEditingId(null)}>{c.cancel}</Btn>
+                  <Btn variant="primary" disabled={!editName.trim() || edit.isPending} onClick={() => edit.mutate(thread.id)}>{c.save}</Btn>
+                </div>
+              </Card>
+            ) : (
+              <Card className="flex items-start justify-between gap-2">
+                <div>
+                  <div className="flex items-center gap-2 mb-1"><h3 className="font-display text-lg">{thread.name}</h3><Tag color={thread.status === "paid_off" ? "green" : thread.status === "abandoned" ? "muted" : "gold"}>{statusLabel(thread.status)}</Tag></div>
+                  <p className="text-sm text-ink-text2">{thread.description}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button aria-label={c.editAria} onClick={() => startEdit(thread)} className="text-ink-text3 hover:text-ink-text"><Pencil size={15}/></button>
+                  <button aria-label={c.deleteAria} onClick={() => { if (confirm(c.deleteConfirm)) del.mutate(thread.id); }} className="text-ink-text3 hover:text-ink-red"><X size={16}/></button>
+                </div>
+              </Card>
+            )}
           </li>
         ))}
       </ul>

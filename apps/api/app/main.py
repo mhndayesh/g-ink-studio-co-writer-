@@ -255,6 +255,7 @@ def create_app() -> FastAPI:
         threads,
         versions,
         world,
+        workspace,
     )
 
     app.include_router(auth.router,        prefix="/v1/auth",    tags=["auth"])
@@ -269,6 +270,7 @@ def create_app() -> FastAPI:
     app.include_router(scenes.router,      prefix="/v1/stories", tags=["scenes"])
     app.include_router(threads.router,     prefix="/v1/stories", tags=["threads"])
     app.include_router(narrative.router,   prefix="/v1/stories", tags=["narrative"])
+    app.include_router(workspace.router,   prefix="/v1/stories", tags=["workspace"])
     app.include_router(flow.router,        prefix="/v1/stories", tags=["flow"])
     app.include_router(identity.router,    prefix="/v1/stories", tags=["identity"])
     app.include_router(observer.router,    prefix="/v1/stories", tags=["observer"])

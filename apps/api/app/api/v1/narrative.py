@@ -96,7 +96,6 @@ async def delete_revelation(story_id: str, revelation_id: str, user: CurrentUser
 async def list_voice_profiles(story_id: str, user: CurrentUser, db: DB):
     await get_user_story(story_id, user, db)
     rows = await voice_service.list_profiles(db, story_id)
-    await db.commit()
     return envelope_ok({"profiles": [CharacterVoiceProfileOut.model_validate(r).model_dump() for r in rows]})
 
 

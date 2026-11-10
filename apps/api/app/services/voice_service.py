@@ -120,6 +120,8 @@ async def rebuild_profiles(db: AsyncSession, story_id: str) -> list[CharacterVoi
 
 
 async def list_profiles(db: AsyncSession, story_id: str) -> list[CharacterVoiceProfile]:
+    # Read-only. Fingerprints are rebuilt after an approve (post-approve job) or
+    # on an explicit POST /voice/rebuild — a GET must never write.
     rows = (
         await db.execute(
             select(CharacterVoiceProfile)
@@ -127,6 +129,4 @@ async def list_profiles(db: AsyncSession, story_id: str) -> list[CharacterVoiceP
             .order_by(CharacterVoiceProfile.updated_at.desc())
         )
     ).scalars().all()
-    if rows:
-        return rows
-    return await rebuild_profiles(db, story_id)
+    return list(rows)

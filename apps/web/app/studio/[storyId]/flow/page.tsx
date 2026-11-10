@@ -1,8 +1,8 @@
 "use client";
 import { useParams } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Sparkles, Check, MessageSquarePlus, X, BookOpen, Languages, Drama } from "lucide-react";
+import { ArrowRight, CheckCircle2, Sparkles, Check, MessageSquarePlus, StopCircle, X, BookOpen, Languages, Drama } from "lucide-react";
 import * as api from "@/lib/api";
 import { Btn, Card, FG, Inp, PageHdr, Sel, Ta, Tag } from "@/components/ui/Primitives";
 import { useDebouncedSave } from "@/lib/debounce";
@@ -111,6 +111,29 @@ const copyEn = {
   approveFill: (number: string) => `Approve & fill Chapter ${number}`,
   approveOverwrite: "Approve & overwrite chosen chapter",
   threadStatus: { paid_off: "paid off", abandoned: "abandoned", open: "open", active: "active", resolved: "resolved", dormant: "dormant" } as Record<string, string>,
+  stepDraft: "Draft",
+  stepPolish: "Polish",
+  stepReview: "Review",
+  stepFile: "File",
+  extractBtn: "Extract details →",
+  cancel: "Cancel",
+  approveFailed: "Could not save the chapter.",
+  approveSaved: "Chapter saved.",
+  openChapter: "Open chapter",
+  writeNext: "Write next scene",
+  dismiss: "Dismiss",
+  discardConfirm: "Discard this draft? Everything in it (raw text, polished prose, extracted details) will be deleted.",
+  fallbackPolish: "The model degraded — this polish came from the offline fallback, not your model. Re-run before approving.",
+  fallbackApproveConfirm: "This extraction came from the degraded fallback provider. Save it anyway?",
+  retry: "Retry",
+  removeItem: "Remove",
+  includeItem: "Include",
+  editEntitiesHint: "Uncheck or remove anything the AI got wrong — only what remains is filed.",
+  saveFailed: "Saving draft failed — check your connection.",
+  stepNow: "Now",
+  saveWithoutAi: "Save without AI",
+  saveWithoutAiConfirm: "Save this text as a chapter without extracting characters, places, or scenes?",
+  saveWithoutAiHint: "Useful when the model is down — files the prose only.",
 };
 
 type Copy = typeof copyEn;
@@ -216,6 +239,29 @@ const COPY: Record<Locale, Copy> = {
     approveFill: (number: string) => `اعتمد واملأ الفصل ${number}`,
     approveOverwrite: "اعتمد واستبدل الفصل المختار",
     threadStatus: { paid_off: "مُستوفى", abandoned: "مهجور", open: "مفتوح", active: "نشط", resolved: "مكتمل", dormant: "خامل" },
+    stepDraft: "المسودة",
+    stepPolish: "الصياغة",
+    stepReview: "المراجعة",
+    stepFile: "الأرشفة",
+    extractBtn: "استخرج التفاصيل ←",
+    cancel: "إلغاء",
+    approveFailed: "تعذّر حفظ الفصل.",
+    approveSaved: "تم حفظ الفصل.",
+    openChapter: "افتح الفصل",
+    writeNext: "اكتب المشهد التالي",
+    dismiss: "إغلاق",
+    discardConfirm: "هل تريد تجاهل هذه المسودة؟ سيُحذف كل شيء فيها (النص الخام والمصقول والتفاصيل المستخرجة).",
+    fallbackPolish: "تراجع النموذج — هذه الصياغة جاءت من البديل المحلي وليس من نموذجك. أعد التشغيل قبل الاعتماد.",
+    fallbackApproveConfirm: "هذا الاستخلاص جاء من مزوّد البديل المتدهور. هل تريد حفظه رغم ذلك؟",
+    retry: "إعادة المحاولة",
+    removeItem: "إزالة",
+    includeItem: "تضمين",
+    editEntitiesHint: "أزل أو ألغِ تحديد أي شيء أخطأ فيه الذكاء الاصطناعي — سيُؤرشف المتبقي فقط.",
+    saveFailed: "فشل حفظ المسودة — تحقّق من اتصالك.",
+    stepNow: "الآن",
+    saveWithoutAi: "حفظ دون ذكاء اصطناعي",
+    saveWithoutAiConfirm: "هل تريد حفظ هذا النص كفصل دون استخراج الشخصيات والأماكن والمشاهد؟",
+    saveWithoutAiHint: "مفيد عندما يكون النموذج متوقفًا — يحفظ النص فقط.",
   },
 };
 
@@ -235,12 +281,36 @@ export default function FlowPage() {
   const [chapterSummary, setChapterSummary] = useState("");
   const [enhancerOn, setEnhancerOn] = useState(false);
   const [enhancement, setEnhancement] = useState<{ language: string; enhanced: string; notes: string } | null>(null);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [fallbackPolish, setFallbackPolish] = useState(false);
+  const [contextToken, setContextToken] = useState<string | null>(null);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const [approveResult, setApproveResult] = useState<any>(null);
+  const [includedNew, setIncludedNew] = useState<Record<string, boolean>>({});
+  const [restored, setRestored] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const idemRef = useRef<{ hash: string; key: string }>({ hash: "", key: "" });
 
   // Scene setup (optional): who/where this scene is. Pins their full identity in
   // the AI context so in-scene characters always sound exactly like themselves.
   const [sceneCharIds, setSceneCharIds] = useState<string[]>([]);
   const [sceneLocId, setSceneLocId] = useState<string>("");
   const [sceneSetupOpen, setSceneSetupOpen] = useState(false);
+
+  function newAbort(): AbortSignal {
+    abortRef.current?.abort();
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    return ctrl.signal;
+  }
+  function cancelAi() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setPhase(polished ? "reviewing" : "writing");
+  }
+  function errText(e: any): string {
+    return e?.message || String(e) || "AI request failed";
+  }
 
   const { data: draft } = useQuery({ queryKey: ["flow-draft", storyId], queryFn: () => api.flowGetDraft(storyId) });
   const { data: existingChapters } = useQuery({ queryKey: ["chapters", storyId], queryFn: () => api.listChapters(storyId) });
@@ -292,75 +362,119 @@ export default function FlowPage() {
   }, [existingChapters, activeChapterNumber]);
 
   useEffect(() => {
-    if (!draft) return;
-    if (raw === "" && polished === "") {
-      setRaw(draft.raw || "");
-      setPolished(draft.polished || "");
-      setNotes(draft.notes || "");
-      // Only restore extracted if it has real content — an empty FlowExtractResponse
-      // (all keys present, all arrays empty) is truthy in JS and would show the
-      // approve section with nothing in it, letting the user commit empty entities.
-      const ext = draft.extracted;
-      if (ext && (ext.title_suggestion || (ext.characters?.length ?? 0) > 0)) setExtracted(ext);
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft]);
+    if (!draft || restored) return;
+    const ext = draft.extracted;
+    const hasExt = !!(ext && (ext.title_suggestion || (ext.characters?.length ?? 0) > 0 || (ext.scenes?.length ?? 0) > 0));
+    setRaw(draft.raw || "");
+    setPolished(draft.polished || "");
+    setNotes(draft.notes || "");
+    if (hasExt) setExtracted(ext);
+    setChapterTitle(draft.chapter_title || "");
+    setChapterSummary(draft.chapter_summary || "");
+    setSceneCharIds(draft.scene_character_ids || []);
+    setSceneLocId(draft.scene_location_id || "");
+    setEnhancerOn(!!draft.enhancer_on);
+    setTarget(draft.target || "new");
+    setTargetTouched(!!draft.target && draft.target !== "new");
+    // Restore to the right step. In-flight phases degrade to the nearest
+    // stable step (nothing is actually running after a reload).
+    const restoredPhase =
+      draft.phase === "done" && hasExt ? "done"
+        : draft.phase === "extracting" && hasExt ? "done"
+          : draft.phase === "reviewing" || draft.phase === "extracting" ? "reviewing"
+            : "writing";
+    setPhase(restoredPhase as Phase);
+    setRestored(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft, restored]);
 
-  // Autosave the in-progress draft every ~900ms
-  useDebouncedSave({ raw, polished, notes, extracted }, 900, (v) => {
-    if (!v.raw && !v.polished) return;
-    api.flowSaveDraft(storyId, v).catch(() => {});
-  });
+  // If a restored target references a deleted chapter, fall back to append.
+  useEffect(() => {
+    if (!targetTouched || target === "new" || target.startsWith("gap:")) return;
+    if (existingChapters && !existingChapters.some((ch: any) => ch.id === target)) {
+      setTarget("new");
+    }
+  }, [existingChapters, target, targetTouched]);
+
+  const draftPayload = useMemo(() => ({
+    raw, polished, notes, extracted, phase, target,
+    chapter_title: chapterTitle, chapter_summary: chapterSummary,
+    scene_character_ids: sceneCharIds, scene_location_id: sceneLocId || null,
+    enhancer_on: enhancerOn,
+  }), [raw, polished, notes, extracted, phase, target, chapterTitle, chapterSummary, sceneCharIds, sceneLocId, enhancerOn]);
+
+  const { status: draftSaveStatus } = useDebouncedSave(draftPayload, 900, (v) => {
+    if (!v.raw && !v.polished && !v.extracted) return;
+    return api.flowSaveDraft(storyId, v);
+  }, storyId);
 
   const polish = useMutation({
     mutationKey: ["llm", "flow.polish"],
-    mutationFn: () => api.flowPolish(storyId, raw, notes, { scene_character_ids: sceneCharIds, scene_location_id: sceneLocId || null }),
-    onMutate: () => setPhase("polishing"),
+    mutationFn: () => api.flowPolish(storyId, raw, notes, { scene_character_ids: sceneCharIds, scene_location_id: sceneLocId || null }, newAbort()),
+    onMutate: () => { setPhase("polishing"); setAiError(null); },
     onSuccess: (r) => {
       if (!r.polished || !r.polished.trim()) {
-        alert(c.emptyPolishAlert);
+        setAiError(c.emptyPolishAlert);
         setPhase("writing");
         return;
       }
-      setPolished(r.polished); setPhase("reviewing");
+      setPolished(r.polished); setFallbackPolish(!!r.fallback); setContextToken(r.context_token ?? null); setPhase("reviewing");
     },
-    onError: () => setPhase("writing"),
+    onError: (e: any) => {
+      if (e?.name === "AbortError") { setPhase(polished ? "reviewing" : "writing"); return; }
+      setAiError(errText(e)); setPhase("writing");
+    },
+    onSettled: () => { abortRef.current = null; },
   });
 
   const extract = useMutation({
     mutationKey: ["llm", "flow.extract"],
-    mutationFn: () => api.flowExtract(storyId, polished),
-    onMutate: () => setPhase("extracting"),
+    mutationFn: () => api.flowExtract(storyId, polished, { context_token: contextToken, signal: newAbort() }),
+    onMutate: () => { setPhase("extracting"); setAiError(null); },
     onSuccess: (r) => {
       setExtracted(r);
       setChapterTitle(r.title_suggestion || "");
       setChapterSummary(r.summary || "");
+      setFallbackPolish(false);
       setPhase("done");
     },
-    onError: () => setPhase("reviewing"),
+    onError: (e: any) => {
+      if (e?.name === "AbortError") { setPhase("reviewing"); return; }
+      setAiError(errText(e)); setPhase("reviewing");
+    },
+    onSettled: () => { abortRef.current = null; },
   });
 
   const enhance = useMutation({
     mutationKey: ["llm", "flow.enhance"],
-    mutationFn: () => api.flowEnhance(storyId, raw),
-    onMutate: () => setPhase("enhancing"),
-    onSuccess: (r) => { setEnhancement(r); },
-    onError: () => setPhase("writing"),
+    mutationFn: () => api.flowEnhance(storyId, raw, newAbort()),
+    onMutate: () => { setPhase("enhancing"); setAiError(null); },
+    onSuccess: (r) => { setEnhancement(r); setFallbackPolish(!!r.fallback); },
+    onError: (e: any) => {
+      if (e?.name === "AbortError") { setPhase("writing"); return; }
+      setAiError(errText(e)); setPhase("writing");
+    },
+    onSettled: () => { abortRef.current = null; },
   });
 
   // Skip AI polish entirely: use the raw text as-is and jump straight to extract.
   // If the language enhancer is on, run enhancement first.
   const skipPolish = useMutation({
     mutationKey: ["llm", "flow.skip-polish"],
-    mutationFn: (text: string) => api.flowExtract(storyId, text),
-    onMutate: (text) => { setPolished(text); setPhase("extracting"); },
+    mutationFn: (text: string) => api.flowExtract(storyId, text, { signal: newAbort() }),
+    onMutate: (text) => { setPolished(text); setPhase("extracting"); setAiError(null); },
     onSuccess: (r) => {
       setExtracted(r);
       setChapterTitle(r.title_suggestion || "");
       setChapterSummary(r.summary || "");
+      setFallbackPolish(false);
       setPhase("done");
     },
-    onError: () => setPhase("writing"),
+    onError: (e: any) => {
+      if (e?.name === "AbortError") { setPhase("writing"); return; }
+      setAiError(errText(e)); setPhase("writing");
+    },
+    onSettled: () => { abortRef.current = null; },
   });
 
   function handleUseAsIs() {
@@ -372,19 +486,43 @@ export default function FlowPage() {
     }
   }
 
+  function updateExtracted(key: string, next: any) {
+    setExtracted((cur: any) => (cur ? { ...cur, [key]: next } : cur));
+  }
+
+  function idempotencyFor(body: any): string {
+    const hash = JSON.stringify(body);
+    if (idemRef.current.hash !== hash) {
+      const uuid = typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      idemRef.current = { hash, key: uuid };
+    }
+    return idemRef.current.key;
+  }
+
   const approve = useMutation({
     mutationKey: ["llm", "flow.approve"],
     mutationFn: () => {
+      const selectedNew = (extracted?.characters || [])
+        .filter((ch: any) => ch.is_new && includedNew[ch.name] !== false)
+        .map((ch: any) => ch.name);
+      const allNewCount = (extracted?.characters || []).filter((ch: any) => ch.is_new).length;
       const body: any = {
         raw, polished, extracted,
-        include_character_names: [],  // empty = auto-add everything new
+        // Empty = auto-add every new character; otherwise an allow-list.
+        include_character_names: selectedNew.length === allNewCount ? [] : selectedNew,
         chapter_title: chapterTitle, chapter_summary: chapterSummary,
+        allow_fallback: !!extracted?.fallback,
       };
       if (target.startsWith("gap:")) body.target_chapter_number = Number(target.slice(4));
       else if (target !== "new") body.target_chapter_id = target;
-      return api.flowApprove(storyId, body);
+      const key = idempotencyFor(body);
+      return api.flowApprove(storyId, body, key);
     },
-    onSuccess: () => {
+    onMutate: () => { setApproveError(null); },
+    onSuccess: (r) => {
+      setApproveResult(r);
       qc.invalidateQueries({ queryKey: ["chapters", storyId] });
       qc.invalidateQueries({ queryKey: ["characters", storyId] });
       qc.invalidateQueries({ queryKey: ["locations", storyId] });
@@ -397,17 +535,65 @@ export default function FlowPage() {
       qc.invalidateQueries({ queryKey: ["revelations", storyId] });
       qc.invalidateQueries({ queryKey: ["voice", storyId] });
       qc.invalidateQueries({ queryKey: ["graph", storyId] });
+      qc.invalidateQueries({ queryKey: ["story", storyId] });
+      qc.invalidateQueries({ queryKey: ["flow-draft", storyId] });
       // Reset for the next scene; let the gap-detector pick the new default target
       setRaw(""); setPolished(""); setNotes(""); setExtracted(null);
       setChapterTitle(""); setChapterSummary("");
-      setTargetTouched(false);
+      setSceneCharIds([]); setSceneLocId(""); setIncludedNew({});
+      setFallbackPolish(false); setContextToken(null); setTargetTouched(false);
+      idemRef.current = { hash: "", key: "" };
       setPhase("writing");
+    },
+    onError: (e: any) => {
+      if (e?.name === "AbortError") return;
+      setApproveError(errText(e));
     },
   });
 
+  function handleApprove() {
+    if (extracted?.fallback && !confirm(c.fallbackApproveConfirm)) return;
+    approve.mutate();
+  }
+
+  const saveWithoutAi = useMutation({
+    mutationFn: (text: string) => {
+      const empty = {
+        title_suggestion: "", summary: "", pov_suggestion: "", location_suggestion: "",
+        characters: [], events: [], relationships: [], themes: [], locations: [],
+        factions: [], threads: [], scenes: [], world_rules: [], world_lore: "",
+        fallback: false,
+      };
+      const body: any = {
+        raw: text, polished: text, extracted: empty,
+        chapter_title: chapterTitle, chapter_summary: chapterSummary,
+        allow_fallback: true,
+      };
+      if (target.startsWith("gap:")) body.target_chapter_number = Number(target.slice(4));
+      else if (target !== "new") body.target_chapter_id = target;
+      const uuid = typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      return api.flowApprove(storyId, body, uuid);
+    },
+    onSuccess: (r) => {
+      setApproveResult(r);
+      qc.invalidateQueries({ queryKey: ["chapters", storyId] });
+      qc.invalidateQueries({ queryKey: ["story", storyId] });
+      setRaw(""); setPolished(""); setNotes(""); setExtracted(null);
+      setChapterTitle(""); setChapterSummary("");
+      setSceneCharIds([]); setSceneLocId(""); setIncludedNew({});
+      setTargetTouched(false); setPhase("writing");
+    },
+    onError: (e: any) => setApproveError(errText(e)),
+  });
+
   function reset() {
+    if (!confirm(c.discardConfirm)) return;
     setRaw(""); setPolished(""); setExtracted(null); setNotes(""); setPhase("writing");
     setChapterTitle(""); setChapterSummary(""); setEnhancement(null);
+    setSceneCharIds([]); setSceneLocId(""); setIncludedNew({});
+    setAiError(null); setApproveError(null); setFallbackPolish(false); setContextToken(null);
     polish.reset(); extract.reset(); skipPolish.reset(); enhance.reset();
     // Also clear the server-side draft so the next Flow Writing visit starts blank.
     api.flowClearDraft(storyId).catch(() => {});
@@ -463,6 +649,64 @@ export default function FlowPage() {
       />
 
       <AiLockNotice />
+
+      {/* Step indicator — the workflow has four steps and used to be invisible. */}
+      {(() => {
+        const step = phase === "writing" || phase === "polishing" ? 1
+          : phase === "reviewing" || phase === "extracting" || phase === "enhancing" ? 2
+            : 3;
+        const steps = [
+          { n: 1, label: c.stepDraft },
+          { n: 2, label: c.stepReview },
+          { n: 3, label: c.stepFile },
+        ];
+        return (
+          <div className="flex items-center gap-2 mb-4 text-xs">
+            {steps.map((s, i) => (
+              <div key={s.n} className="flex items-center gap-2">
+                <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full border ${step >= s.n ? "border-ink-gold bg-ink-gold/15 text-ink-goldLight" : "border-ink-border text-ink-text3"}`}>
+                  {step > s.n ? <Check size={13}/> : s.n}
+                </span>
+                <span className={step >= s.n ? "text-ink-text" : "text-ink-text3"}>{s.label}</span>
+                {step === s.n && <Tag color="gold">{c.stepNow}</Tag>}
+                {i < steps.length - 1 && <span className="w-8 h-px bg-ink-border" />}
+              </div>
+            ))}
+            {draftSaveStatus === "error" && <span className="ms-auto text-ink-red">{c.saveFailed}</span>}
+            {draftSaveStatus === "saving" && <span className="ms-auto text-ink-text3">{c.working}</span>}
+          </div>
+        );
+      })()}
+
+      {approveResult && (
+        <Card className="mb-4 border-ink-green/40 bg-ink-green/5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="flex items-center gap-2 text-sm">
+              <CheckCircle2 size={16} className="text-ink-green" />
+              {c.approveSaved}
+              {approveResult.version_no ? <span className="text-ink-text3">v{approveResult.version_no}</span> : null}
+            </p>
+            <div className="flex items-center gap-2">
+              <a
+                href={`/studio/${storyId}/chapters?chapter=${approveResult.chapter_id}`}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-semibold bg-ink-gold text-ink-deep hover:brightness-110"
+              >
+                {c.openChapter} <ArrowRight size={14} className="rtl-flip"/>
+              </a>
+              <Btn variant="ghost" onClick={() => setApproveResult(null)}>{c.dismiss}</Btn>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {aiError && (
+        <Card className="mb-4 border-ink-red/40 bg-ink-red/10">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-sm text-ink-red">{aiError}</p>
+            <Btn variant="ghost" onClick={() => setAiError(null)}>{c.dismiss}</Btn>
+          </div>
+        </Card>
+      )}
 
       {(phase === "writing" || phase === "polishing") && (
         <>
@@ -566,6 +810,13 @@ export default function FlowPage() {
                     <div className="absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all" style={{ insetInlineStart: enhancerOn ? 16 : 2 }} />
                   </div>
                 </label>
+                <button
+                  type="button"
+                  className="text-xs text-ink-text3 hover:text-ink-text underline underline-offset-2"
+                  title={c.saveWithoutAiHint}
+                  disabled={!raw.trim() || saveWithoutAi.isPending}
+                  onClick={() => { if (confirm(c.saveWithoutAiConfirm)) saveWithoutAi.mutate(raw); }}
+                >{c.saveWithoutAi}</button>
               </div>
               <Btn
                 variant="primary"
@@ -574,6 +825,9 @@ export default function FlowPage() {
               >
                 <Sparkles size={14}/> {polish.isPending ? c.shaping : c.shapeBtn}
               </Btn>
+              {(polish.isPending || skipPolish.isPending || enhance.isPending) && (
+                <Btn variant="ghost" onClick={cancelAi}><StopCircle size={14}/> {c.cancel}</Btn>
+              )}
             </div>
           </Card>
         </>
@@ -590,7 +844,10 @@ export default function FlowPage() {
           </div>
 
           {!enhancement ? (
-            <p className="text-sm text-ink-text2">{c.checking}</p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-ink-text2">{c.checking}</p>
+              <Btn variant="ghost" onClick={cancelAi}><StopCircle size={14}/> {c.cancel}</Btn>
+            </div>
           ) : (
             <>
               {enhancement.notes && (
@@ -628,6 +885,9 @@ export default function FlowPage() {
               <Btn variant="ghost" onClick={reset}><X size={14}/> {c.discard}</Btn>
             </div>
             <Ta rows={14} value={polished} onChange={e => setPolished(e.target.value)} className="leading-relaxed" />
+            {fallbackPolish && (
+              <p className="mt-2 text-sm text-ink-red">{c.fallbackPolish}</p>
+            )}
             <FG label={c.revisionNotes}>
               <Inp value={notes} onChange={e => setNotes(e.target.value)} placeholder={c.notesPlaceholder} />
             </FG>
@@ -636,8 +896,14 @@ export default function FlowPage() {
                 <MessageSquarePlus size={14}/> {polish.isPending ? c.revising : c.addNotesRevise}
               </Btn>
               <Btn variant="primary" disabled={!polished.trim() || extract.isPending || !aiAvailable} onClick={() => extract.mutate()}>
-                <Sparkles size={14}/> {extract.isPending ? c.readingScene : c.approveWhat}
+                <Sparkles size={14}/> {extract.isPending ? c.readingScene : c.extractBtn}
               </Btn>
+              <Btn variant="ghost" disabled={!polished.trim() || saveWithoutAi.isPending} onClick={() => { if (confirm(c.saveWithoutAiConfirm)) saveWithoutAi.mutate(polished); }}>
+                {c.saveWithoutAi}
+              </Btn>
+              {extract.isPending && (
+                <Btn variant="ghost" onClick={cancelAi}><StopCircle size={14}/> {c.cancel}</Btn>
+              )}
             </div>
           </Card>
         </>
@@ -674,7 +940,8 @@ export default function FlowPage() {
                 </button>
               </div>
             )}
-            <p className="text-sm text-ink-text2 mb-4">{c.willFileNote}</p>
+            <p className="text-sm text-ink-text2 mb-1">{c.willFileNote}</p>
+            <p className="text-xs text-ink-text3 mb-4">{c.editEntitiesHint}</p>
 
             <div className="grid gap-4 md:grid-cols-2">
               <FG label={c.chapterTitleLabel}><Inp value={chapterTitle} onChange={e => setChapterTitle(e.target.value)} /></FG>
@@ -708,11 +975,24 @@ export default function FlowPage() {
               <div className="mb-4">
                 <h3 className="label">{c.charactersInScene} <span className="text-ink-text3 normal-case tracking-normal">{c.charactersNote}</span></h3>
                 <div className="flex flex-wrap gap-2">
-                  {extracted.characters.map((char: any) => (
-                    <div key={char.name} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded border ${char.is_new ? "border-ink-gold/40 bg-ink-gold/10" : "border-ink-border bg-ink-surface2"}`}>
+                  {extracted.characters.map((char: any, ci: number) => (
+                    <div key={`${char.name}-${ci}`} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded border ${char.is_new ? "border-ink-gold/40 bg-ink-gold/10" : "border-ink-border bg-ink-surface2"}`}>
+                      {char.is_new && (
+                        <input
+                          type="checkbox"
+                          checked={includedNew[char.name] !== false}
+                          onChange={e => setIncludedNew(v => ({ ...v, [char.name]: e.target.checked }))}
+                          title={c.includeItem}
+                        />
+                      )}
                       <span>{char.name}</span>
                       {char.role && <span className="text-xs text-ink-text2">· {char.role}</span>}
                       <Tag color={char.is_new ? "gold" : "muted"}>{char.is_new ? c.newTag : c.existingTag}</Tag>
+                      <button
+                        aria-label={c.removeItem}
+                        className="text-ink-text3 hover:text-ink-red"
+                        onClick={() => updateExtracted("characters", extracted.characters.filter((_: any, i: number) => i !== ci))}
+                      ><X size={12}/></button>
                     </div>
                   ))}
                 </div>
@@ -724,7 +1004,10 @@ export default function FlowPage() {
                 <h3 className="label">{c.relationships}</h3>
                 <ul className="space-y-1 text-sm">
                   {extracted.relationships.map((r: any, i: number) => (
-                    <li key={i}>• <strong>{r.source}</strong> <Tag color="gold">{r.type}</Tag> <strong>{r.target}</strong>{r.description && <span className="text-ink-text2"> — {r.description}</span>}</li>
+                    <li key={i} className="flex items-start justify-between gap-2">
+                      <span>• <strong>{r.source}</strong> <Tag color="gold">{r.type}</Tag> <strong>{r.target}</strong>{r.description && <span className="text-ink-text2"> — {r.description}</span>}</span>
+                      <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("relationships", extracted.relationships.filter((_: any, j: number) => j !== i))}><X size={12}/></button>
+                    </li>
                   ))}
                 </ul>
               </div>
@@ -732,26 +1015,46 @@ export default function FlowPage() {
             {(extracted.themes || []).length > 0 && (
               <div className="mb-3">
                 <h3 className="label">{c.themes}</h3>
-                <div className="flex flex-wrap gap-2">{extracted.themes.map((theme: string) => <Tag key={theme} color="green">{theme}</Tag>)}</div>
+                <div className="flex flex-wrap gap-2">{extracted.themes.map((theme: string, i: number) => (
+                  <span key={`${theme}-${i}`} className="inline-flex items-center gap-1">
+                    <Tag color="green">{theme}</Tag>
+                    <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("themes", extracted.themes.filter((_: string, j: number) => j !== i))}><X size={11}/></button>
+                  </span>
+                ))}</div>
               </div>
             )}
             {(extracted.locations || []).length > 0 && (
               <div className="mb-3">
                 <h3 className="label">{c.locations}</h3>
-                <div className="flex flex-wrap gap-2">{extracted.locations.map((loc: any) => <Tag key={loc.name} color="rose">{loc.name}</Tag>)}</div>
+                <div className="flex flex-wrap gap-2">{extracted.locations.map((loc: any, i: number) => (
+                  <span key={`${loc.name}-${i}`} className="inline-flex items-center gap-1">
+                    <Tag color="rose">{loc.name}</Tag>
+                    <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("locations", extracted.locations.filter((_: any, j: number) => j !== i))}><X size={11}/></button>
+                  </span>
+                ))}</div>
               </div>
             )}
             {(extracted.factions || []).length > 0 && (
               <div className="mb-3">
                 <h3 className="label">{c.factions}</h3>
-                <div className="flex flex-wrap gap-2">{extracted.factions.map((faction: any) => <Tag key={faction.name} color="muted">{faction.name}</Tag>)}</div>
+                <div className="flex flex-wrap gap-2">{extracted.factions.map((faction: any, i: number) => (
+                  <span key={`${faction.name}-${i}`} className="inline-flex items-center gap-1">
+                    <Tag color="muted">{faction.name}</Tag>
+                    <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("factions", extracted.factions.filter((_: any, j: number) => j !== i))}><X size={11}/></button>
+                  </span>
+                ))}</div>
               </div>
             )}
             {(extracted.threads || []).length > 0 && (
               <div className="mb-3">
                 <h3 className="label">{c.plotThreads}</h3>
                 <ul className="space-y-1 text-sm">
-                  {extracted.threads.map((thread: any, i: number) => (<li key={i}>• <strong>{thread.name}</strong> <Tag color={thread.status === "paid_off" ? "green" : thread.status === "abandoned" ? "muted" : "gold"}>{c.threadStatus[thread.status] ?? thread.status}</Tag>{thread.description && <span className="text-ink-text2"> — {thread.description}</span>}</li>))}
+                  {extracted.threads.map((thread: any, i: number) => (
+                    <li key={i} className="flex items-start justify-between gap-2">
+                      <span>• <strong>{thread.name}</strong> <Tag color={thread.status === "paid_off" ? "green" : thread.status === "abandoned" ? "muted" : "gold"}>{c.threadStatus[thread.status] ?? thread.status}</Tag>{thread.description && <span className="text-ink-text2"> — {thread.description}</span>}</span>
+                      <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("threads", extracted.threads.filter((_: any, j: number) => j !== i))}><X size={12}/></button>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
@@ -759,14 +1062,22 @@ export default function FlowPage() {
               <div className="mb-3">
                 <h3 className="label">{c.worldRules}</h3>
                 <ul className="space-y-1 text-sm">
-                  {extracted.world_rules.map((rule: string, i: number) => <li key={i}>• {rule}</li>)}
+                  {extracted.world_rules.map((rule: string, i: number) => (
+                    <li key={i} className="flex items-start justify-between gap-2">
+                      <span>• {rule}</span>
+                      <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("world_rules", extracted.world_rules.filter((_: string, j: number) => j !== i))}><X size={12}/></button>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
             {extracted.world_lore && (
               <div className="mb-3">
                 <h3 className="label">{c.worldLore}</h3>
-                <p className="text-sm text-ink-text2">{extracted.world_lore}</p>
+                <div className="flex items-start justify-between gap-2">
+                  <p className="text-sm text-ink-text2">{extracted.world_lore}</p>
+                  <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("world_lore", "")}><X size={12}/></button>
+                </div>
               </div>
             )}
             {(extracted.scenes || []).length > 0 && (
@@ -780,6 +1091,7 @@ export default function FlowPage() {
                         <strong>{s.title || s.beat || c.untitledScene}</strong>
                         {s.pov && <Tag color="gold">{c.pov(s.pov)}</Tag>}
                         {s.location && <Tag color="rose">{s.location}</Tag>}
+                        <button aria-label={c.removeItem} className="ms-auto text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("scenes", extracted.scenes.filter((_: any, j: number) => j !== i))}><X size={13}/></button>
                       </div>
                       {s.summary && <p className="text-sm text-ink-text2">{s.summary}</p>}
                       {(s.goal || s.conflict || s.outcome) && (
@@ -806,14 +1118,22 @@ export default function FlowPage() {
               <div className="mb-3">
                 <h3 className="label">{c.keyEvents}</h3>
                 <ul className="space-y-1 text-sm">
-                  {extracted.events.map((e: any, i: number) => (<li key={i}>• <span className="text-ink-text3 uppercase tracking-wider text-[10px] me-1">{e.kind}</span> {e.description}</li>))}
+                  {extracted.events.map((e: any, i: number) => (
+                    <li key={i} className="flex items-start justify-between gap-2">
+                      <span>• <span className="text-ink-text3 uppercase tracking-wider text-[10px] me-1">{e.kind}</span> {e.description}</span>
+                      <button aria-label={c.removeItem} className="text-ink-text3 hover:text-ink-red" onClick={() => updateExtracted("events", extracted.events.filter((_: any, j: number) => j !== i))}><X size={12}/></button>
+                    </li>
+                  ))}
                 </ul>
               </div>
             )}
 
+            {approveError && (
+              <p className="mt-3 text-sm text-ink-red">{c.approveFailed} {approveError}</p>
+            )}
             <div className="flex gap-2 justify-end mt-4">
               <Btn variant="ghost" onClick={reset}>{c.discard}</Btn>
-              <Btn variant="primary" disabled={approve.isPending || (!extracted?.title_suggestion && !(extracted?.characters?.length))} onClick={() => approve.mutate()}>
+              <Btn variant="primary" disabled={approve.isPending || !extracted} onClick={handleApprove}>
                 <Check size={14}/> {approve.isPending
                   ? c.filing
                   : target === "new"

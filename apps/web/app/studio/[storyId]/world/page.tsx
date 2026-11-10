@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Plus, X } from "lucide-react";
 import * as api from "@/lib/api";
-import { Btn, Card, FG, Inp, PageHdr, Ta, Tag } from "@/components/ui/Primitives";
+import { Btn, Card, FG, Inp, PageHdr, QueryError, Ta, Tag } from "@/components/ui/Primitives";
 import { CoverUploader } from "@/components/ui/CoverUploader";
 import { useDebouncedSave } from "@/lib/debounce";
 import { useI18n } from "@/lib/i18n";
@@ -65,7 +65,7 @@ export default function WorldPage() {
   const qc = useQueryClient();
   const { t, locale } = useI18n();
   const c = locale === "ar" ? COPY.ar : COPY.en;
-  const { data: world } = useQuery({ queryKey: ["world", storyId], queryFn: () => api.getWorld(storyId) });
+  const { data: world, isError, error, refetch } = useQuery({ queryKey: ["world", storyId], queryFn: () => api.getWorld(storyId) });
   const { data: story } = useQuery({ queryKey: ["story", storyId], queryFn: () => api.getStory(storyId) });
 
   const setCover = useMutation({
@@ -80,8 +80,22 @@ export default function WorldPage() {
   useEffect(() => { if (world && !draft) setDraft({ ...world }); }, [world, draft]);
 
   const patch = useMutation({
-    mutationFn: (p: any) => api.patchWorld(storyId, p),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["world", storyId] }),
+    mutationFn: async (p: any) => {
+      const updated = await api.patchWorld(storyId, p);
+      // Keep the story row (hub title/genre) in sync with the world bible.
+      if (p.title !== undefined || p.genre !== undefined) {
+        await api.updateStory(storyId, {
+          ...(p.title !== undefined ? { title: p.title } : {}),
+          ...(p.genre !== undefined ? { genre: p.genre } : {}),
+        });
+      }
+      return updated;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["world", storyId] });
+      qc.invalidateQueries({ queryKey: ["story", storyId] });
+      qc.invalidateQueries({ queryKey: ["stories"] });
+    },
   });
 
   useDebouncedSave(draft, 900, (d) => {
@@ -98,6 +112,7 @@ export default function WorldPage() {
   function addTheme() { if (!newTheme.trim() || !draft) return; setDraft({ ...draft, themes: [...(draft.themes || []), newTheme.trim()] }); setNewTheme(""); }
   function removeTheme(i: number) { if (!draft) return; setDraft({ ...draft, themes: draft.themes.filter((_: any, idx: number) => idx !== i) }); }
 
+  if (isError) return <QueryError error={error} retry={refetch} what={c.title} />;
   if (!draft) return <p className="text-ink-text2">{t("common.loading")}</p>;
 
   return (

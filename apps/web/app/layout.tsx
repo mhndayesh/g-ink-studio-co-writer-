@@ -10,6 +10,8 @@ import { LOCALE_COOKIE, normalizeLocale } from "@/lib/locale";
 export const metadata: Metadata = {
   title: "G-Ink Studio — Write, connect, publish",
   description: "A creative writing studio with AI co-writing, story mapping, and a reader community.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "G-Ink", statusBarStyle: "black-translucent" },
 };
 
 // Adapt to the device width (phones, tablets, desktop) instead of rendering at a

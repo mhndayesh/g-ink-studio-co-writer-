@@ -108,7 +108,7 @@ export default function StudioHub() {
           return (
           <Card key={s.id} className="flex flex-col !p-0 overflow-hidden">
             {/* Cover banner (or a genre-tinted placeholder) */}
-            <Link href={`/studio/${s.id}/flow`} className="block relative h-32 bg-ink-surface2 border-b border-ink-border">
+            <Link href={`/studio/${s.id}`} className="block relative h-32 bg-ink-surface2 border-b border-ink-border">
               {cover ? (
                 // eslint-disable-next-line @next/next/no-img-element
                 <img src={cover} alt="" className="w-full h-full object-cover" />
@@ -120,7 +120,7 @@ export default function StudioHub() {
             </Link>
             <div className="p-4 flex flex-col flex-1">
               <div className="flex items-start justify-between gap-2">
-                <Link href={`/studio/${s.id}/flow`} className="flex-1 min-w-0">
+                <Link href={`/studio/${s.id}`} className="flex-1 min-w-0">
                   <h3 className="font-display text-lg text-ink-text mb-1 truncate">{s.title || t("common.untitled")}</h3>
                   <p className="text-xs text-ink-text2 uppercase tracking-wider">{s.genre ? (GENRES.find(g => g.value === s.genre) ? t(GENRES.find(g => g.value === s.genre)!.key) : s.genre) : t("common.story")}</p>
                 </Link>
@@ -136,7 +136,7 @@ export default function StudioHub() {
                 <Tag color="muted">{t("studio.wordsCount", { count: formatNumber(s.stats?.words ?? 0) })}</Tag>
               </div>
               <div className="flex gap-2 mt-4">
-                <Link href={`/studio/${s.id}/flow`} className="btn btn-primary flex-1 justify-center">{t("studio.open")} <span className="rtl-flip">?</span></Link>
+                <Link href={`/studio/${s.id}`} className="btn btn-primary flex-1 justify-center">{t("studio.open")} <span className="rtl-flip">?</span></Link>
                 <Link href={`/publish/${s.id}`} className="btn justify-center" title={t("common.publish")}>
                   <Send size={14}/> {t("common.publish")}
                 </Link>

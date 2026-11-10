@@ -113,6 +113,9 @@ class StoryUpdate(BaseModel):
     language: Locale | None = None
     palette_idx: int | None = None
     cover_image_url: str | None = None
+    target_word_count: int | None = None
+    daily_word_target: int | None = None
+    deadline: datetime | None = None
 
     _v_cover = field_validator("cover_image_url")(_validate_cover_url)
 
@@ -121,6 +124,11 @@ class StoryStats(BaseModel):
     words: int = 0
     chapters: int = 0
     characters: int = 0
+    words_today: int = 0
+    streak_days: int = 0
+    target_word_count: int | None = None
+    daily_word_target: int | None = None
+    deadline: datetime | None = None
 
 
 class StoryOut(BaseModel):
@@ -131,6 +139,9 @@ class StoryOut(BaseModel):
     language: Locale = "en"
     palette_idx: int
     cover_image_url: str | None = None
+    target_word_count: int | None = None
+    daily_word_target: int | None = None
+    deadline: datetime | None = None
     graph_status: str
     created_at: datetime
     updated_at: datetime
@@ -484,6 +495,7 @@ class ChapterOut(BaseModel):
     title: str
     content: str
     summary: str
+    word_count: int = 0
     cover_image_url: str | None = None
     pov_character_id: str | None
     location_id: str | None
@@ -491,6 +503,51 @@ class ChapterOut(BaseModel):
     seeds: list[Any]
     created_at: datetime
     updated_at: datetime
+
+
+class ChapterRevisionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    chapter_id: str
+    title: str
+    content: str
+    summary: str
+    word_count: int
+    source: str
+    note: str
+    created_at: datetime
+
+
+class ChapterReorderRequest(BaseModel):
+    chapter_ids: list[str] = Field(min_length=1)
+
+
+class StoryNoteIn(BaseModel):
+    title: str = ""
+    body: str = ""
+
+
+class StoryNoteOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    story_id: str
+    title: str
+    body: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class SearchHit(BaseModel):
+    kind: Literal["chapter", "character", "location", "faction", "thread", "scene", "note"]
+    id: str
+    title: str
+    snippet: str = ""
+    meta: dict = {}
+
+
+class SearchResponse(BaseModel):
+    query: str
+    hits: list[SearchHit] = []
 
 
 # ── Flow Writing ────────────────────────────────────────────────────────
@@ -507,10 +564,14 @@ class FlowPolishRequest(BaseModel):
 class FlowPolishResponse(BaseModel):
     polished: str
     fallback: bool = False
+    # Opaque handle to the context used for this polish; pass it to /flow/extract
+    # so the pair reuses one context build instead of rebuilding it.
+    context_token: str | None = None
 
 
 class FlowExtractRequest(BaseModel):
     polished: str = Field(max_length=200_000)
+    context_token: str | None = None
 
 
 class ExtractedCharacter(BaseModel):
@@ -618,6 +679,9 @@ class FlowApproveRequest(BaseModel):
     # If set (and target_chapter_id is None), create the new chapter at this
     # specific number — used to fill gaps in chapter numbering.
     target_chapter_number: int | None = None
+    # Refuse to commit degraded (fallback) extraction output unless the author
+    # explicitly confirms it (the UI asks before setting this).
+    allow_fallback: bool = False
 
 
 class FlowApproveResponse(BaseModel):

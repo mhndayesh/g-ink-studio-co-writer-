@@ -13,10 +13,21 @@ async def get_world(story_id: str, user: CurrentUser, db: DB):
     story = await get_user_story(story_id, user, db)
     world = await db.get(World, story.id)
     if world is None:
-        world = World(story_id=story.id)
-        db.add(world)
-        await db.commit()
-        await db.refresh(world)
+        # Read-only: return a default payload instead of INSERTing on a GET.
+        # A World row is created explicitly by create_story / patch_world.
+        default = WorldOut(
+            story_id=story.id,
+            title=story.title or "",
+            genre=story.genre or "",
+            logline="",
+            time_period="",
+            setting="",
+            rules=[],
+            themes=[],
+            lore="",
+            seeds="",
+        )
+        return envelope_ok({"world": default.model_dump()})
     return envelope_ok({"world": WorldOut.model_validate(world).model_dump()})
 
 

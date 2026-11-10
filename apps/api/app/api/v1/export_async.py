@@ -38,6 +38,19 @@ async def check_pdf_export(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    return await _check_export(story_id, job_id, "pdf", user, db)
+
+
+@router.get("/{story_id}/epub/status/{job_id}")
+async def check_epub_export(
+    story_id: str, job_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    return await _check_export(story_id, job_id, "epub", user, db)
+
+
+async def _check_export(story_id: str, job_id: str, fmt: str, user: User, db: AsyncSession):
     await get_user_story(story_id, user, db)  # 404 for foreign/missing story (IDOR guard)
     try:
         import arq.jobs
@@ -52,7 +65,7 @@ async def check_pdf_export(
         if result and result.get("ready"):
             return envelope_ok({
                 "ready": True,
-                "download_url": f"/v1/export/{story_id}/pdf",
+                "download_url": f"/v1/export/{story_id}/{fmt}",
             })
         return envelope_ok({"ready": False, "status": str(status)})
     except Exception as exc:

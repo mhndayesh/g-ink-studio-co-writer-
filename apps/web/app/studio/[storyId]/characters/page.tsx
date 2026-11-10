@@ -1,5 +1,5 @@
 "use client";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -24,6 +24,9 @@ const COPY = {
     selectCharacter: "Select a character on the left.",
     autosave: "Basic roster info. Autosaves as you type.",
     deleteConfirm: "Delete this character?",
+    saving: "Saving…",
+    saved: "Saved",
+    saveFailed: "Save failed — retrying on next edit",
     name: "Name",
     role: "Role",
     status: "Status",
@@ -64,6 +67,9 @@ const COPY = {
     selectCharacter: "اختر شخصية من القائمة.",
     autosave: "بيانات أساسية عن الشخصية. تُحفظ تلقائيًا أثناء الكتابة.",
     deleteConfirm: "هل تريد حذف هذه الشخصية؟",
+    saving: "جارٍ الحفظ…",
+    saved: "تم الحفظ",
+    saveFailed: "فشل الحفظ — ستتم إعادة المحاولة عند التعديل التالي",
     name: "الاسم",
     role: "الدور",
     status: "الحالة",
@@ -108,12 +114,20 @@ export default function CharactersPage() {
     status ? (c.statuses as Record<string, string>)[status] ?? status : "";
 
   const { data: characters, isError, error, refetch } = useQuery({ queryKey: ["characters", storyId], queryFn: () => api.listCharacters(storyId) });
+  const searchParams = useSearchParams();
   const [activeId, setActiveId] = useState<string | null>(null);
+  useEffect(() => {
+    const fromUrl = searchParams.get("character");
+    if (fromUrl) setActiveId(fromUrl);
+  }, [searchParams]);
   useEffect(() => { if (!activeId && characters && characters.length > 0) setActiveId(characters[0].id); }, [characters, activeId]);
 
   const active = useMemo(() => characters?.find((c: any) => c.id === activeId) || null, [characters, activeId]);
   const [draft, setDraft] = useState<any>(null);
-  useEffect(() => { setDraft(active ? { ...active } : null); }, [active]);
+  useEffect(() => {
+    if (active && active.id === activeId) setDraft({ ...active });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, active?.id]);
 
   const create = useMutation({
     mutationFn: () => api.createCharacter(storyId, { name: c.defaultName }),
@@ -129,10 +143,15 @@ export default function CharactersPage() {
   });
 
   // Autosave only the roster basics (name/role/status/age/icon).
-  useDebouncedSave(draft, 900, (d) => {
+  const { status: saveStatus, flush } = useDebouncedSave(draft, 900, (d) => {
     if (!d || !activeId) return;
     patch.mutate({ name: d.name, role: d.role, status: d.status, age: d.age, icon: d.icon });
-  });
+  }, activeId ?? "none");
+
+  function selectCharacter(id: string) {
+    flush();
+    setActiveId(id);
+  }
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 lg:gap-6 max-w-7xl">
@@ -143,7 +162,7 @@ export default function CharactersPage() {
         <ul className="space-y-1">
           {(characters || []).map((character: any) => (
             <li key={character.id}>
-              <button onClick={() => setActiveId(character.id)} className={`w-full text-start px-3 py-2 rounded text-sm ${activeId === character.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}>
+              <button onClick={() => selectCharacter(character.id)} className={`w-full text-start px-3 py-2 rounded text-sm ${activeId === character.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}>
                 {character.name} <span className="text-ink-text3 text-xs">{roleLabel(character.role)}</span>
               </button>
             </li>
@@ -157,7 +176,12 @@ export default function CharactersPage() {
           <>
             <PageHdr
               title={draft.name}
-              subtitle={c.autosave}
+              subtitle={
+                saveStatus === "saving" ? c.saving
+                  : saveStatus === "error" ? c.saveFailed
+                    : saveStatus === "saved" ? c.saved
+                      : c.autosave
+              }
               right={<Btn variant="ghost" onClick={() => { if (confirm(c.deleteConfirm)) del.mutate(); }}><Trash2 size={14}/> {t("common.delete")}</Btn>}
             />
 

@@ -77,6 +77,13 @@ async def reproject_story_task(ctx: dict, story_id: str) -> dict:
     return {"story_id": story_id, **result}
 
 
+async def post_approve_task(ctx: dict, story_id: str, chapter_id: str | None = None) -> dict:
+    """Voice fingerprints + vector index + graph projection, off-request."""
+    from app.services import post_approve
+
+    return await post_approve.run(story_id, chapter_id)
+
+
 async def reconcile_graphs_task(ctx: dict) -> dict:
     """Scheduled self-heal for stories whose Neo4j projection is stale.
 
@@ -133,7 +140,7 @@ async def prune_idempotency_task(ctx: dict) -> dict:
 
 
 class WorkerSettings:
-    functions = [export_pdf_task, export_epub_task, reproject_story_task]
+    functions = [export_pdf_task, export_epub_task, reproject_story_task, post_approve_task]
     cron_jobs = [
         # Every 5 minutes, repair any drifted Neo4j projections (graph self-heal).
         cron(reconcile_graphs_task, minute=set(range(0, 60, 5))),

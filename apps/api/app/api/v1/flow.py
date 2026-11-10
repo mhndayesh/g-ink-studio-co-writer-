@@ -45,7 +45,7 @@ async def flow_polish(request: Request, story_id: str, payload: FlowPolishReques
 @limiter.limit("30/minute")
 async def flow_extract(request: Request, story_id: str, payload: FlowExtractRequest, user: CurrentUser, db: DB):
     await get_user_story(story_id, user, db)
-    resp = await flow_service.extract(db, user, story_id, payload.polished)
+    resp = await flow_service.extract(db, user, story_id, payload.polished, payload.context_token)
     await db.commit()
     return envelope_ok(resp.model_dump())
 
@@ -59,13 +59,19 @@ async def flow_approve(
     idempotency_key: Annotated[str | None, Header()] = None,
 ):
     await get_user_story(story_id, user, db)
-    # Guard against a retried approve double-committing a chapter (see core.idempotency).
+    # Reserve first, then do the work: a concurrent retry cannot race past a
+    # check-then-act window. A reused key with a different payload is rejected.
     scope = f"flow.approve:{story_id}"
-    replayed = await idempotency.replay(db, user.id, idempotency_key, scope)
+    req_hash = idempotency.payload_hash(payload.model_dump())
+    replayed = await idempotency.reserve(db, user.id, idempotency_key, scope, req_hash)
     if replayed is not None:
         return envelope_ok(replayed)
 
-    chapter, new_ids, themes, version_no, scene_ids, revelation_ids, link_ids = await flow_service.approve(db, user, story_id, payload)
+    try:
+        chapter, new_ids, themes, version_no, scene_ids, revelation_ids, link_ids = await flow_service.approve(db, user, story_id, payload)
+    except Exception:
+        await idempotency.release(db, user.id, idempotency_key, scope)
+        raise
     result = FlowApproveResponse(
         chapter_id=chapter.id,
         new_character_ids=new_ids,
@@ -75,7 +81,7 @@ async def flow_approve(
         thread_scene_link_ids=link_ids,
         version_no=version_no,
     ).model_dump()
-    await idempotency.remember(db, user.id, idempotency_key, scope, result)
+    await idempotency.complete(db, user.id, idempotency_key, scope, result)
     return envelope_ok(result)
 
 
@@ -103,6 +109,17 @@ async def flow_save_draft(story_id: str, payload: dict, user: CurrentUser, db: D
     draft.notes = payload.get("notes", "") or ""
     if isinstance(payload.get("extracted"), dict):
         draft.extracted = payload["extracted"]
+    # Workflow state — lets a reload resume the exact step, target, and pins.
+    if payload.get("phase") in ("writing", "polishing", "reviewing", "extracting", "enhancing", "done"):
+        draft.phase = payload["phase"]
+    if isinstance(payload.get("target"), str) and payload["target"]:
+        draft.target = payload["target"][:64]
+    draft.chapter_title = str(payload.get("chapter_title") or "")[:255]
+    draft.chapter_summary = str(payload.get("chapter_summary") or "")
+    if isinstance(payload.get("scene_character_ids"), list):
+        draft.scene_character_ids = [str(x) for x in payload["scene_character_ids"] if isinstance(x, str)][:200]
+    draft.scene_location_id = payload.get("scene_location_id") or None
+    draft.enhancer_on = bool(payload.get("enhancer_on", False))
     await db.commit()
     await db.refresh(draft)
     return envelope_ok({"draft_id": draft.id})
@@ -123,6 +140,14 @@ async def flow_get_draft(story_id: str, user: CurrentUser, db: DB):
             "polished": draft.polished,
             "notes": draft.notes,
             "extracted": draft.extracted,
+            "phase": draft.phase,
+            "target": draft.target,
+            "chapter_title": draft.chapter_title,
+            "chapter_summary": draft.chapter_summary,
+            "scene_character_ids": draft.scene_character_ids or [],
+            "scene_location_id": draft.scene_location_id,
+            "enhancer_on": draft.enhancer_on,
+            "updated_at": draft.updated_at.isoformat() if draft.updated_at else None,
         }
     })
 
@@ -179,6 +204,7 @@ async def writing_companion(request: Request, story_id: str, payload: CompanionR
         system=localized_prompt("flow.companion", lang, COMPANION_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg,
         temperature=0.8, max_tokens=32000, story_id=story_id,
+        language=lang,
     )
     await db.commit()
     return envelope_ok(CompanionResponse(draft=resp.text.strip(), fallback=fb).model_dump())
@@ -214,6 +240,7 @@ async def writing_companion_stream(request: Request, story_id: str, payload: Com
         system=localized_prompt("flow.companion", lang, COMPANION_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg,
         temperature=0.8, max_tokens=32000, story_id=story_id,
+        language=lang,
     )
 
     async def _sse():

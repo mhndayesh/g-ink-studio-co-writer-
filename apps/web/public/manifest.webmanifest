@@ -1,0 +1,18 @@
+{
+  "name": "G-Ink Studio — Co-Writer",
+  "short_name": "G-Ink",
+  "description": "A creative writing studio with AI co-writing, story mapping, and a reader community.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#12100e",
+  "theme_color": "#12100e",
+  "icons": [
+    {
+      "src": "/inkwell-stepper.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

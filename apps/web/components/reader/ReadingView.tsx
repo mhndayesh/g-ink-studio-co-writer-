@@ -159,10 +159,26 @@ export default function ReadingView({
   const { locale, formatNumber } = useI18n();
   const c = locale === "ar" ? COPY.ar : COPY.en;
 
-  const [theme, setTheme]         = useState<Theme>("site");
-  const [fontSize, setFontSize]   = useState(18);
+  const [theme, setTheme]         = useState<Theme>(() => {
+    if (typeof window === "undefined") return "site";
+    const saved = window.localStorage.getItem("gink.reader.theme");
+    return saved && saved in THEMES ? (saved as Theme) : "site";
+  });
+  const [fontSize, setFontSize]   = useState(() => {
+    if (typeof window === "undefined") return 18;
+    const saved = Number(window.localStorage.getItem("gink.reader.fontSize"));
+    return Number.isFinite(saved) && saved >= 16 && saved <= 24 ? saved : 18;
+  });
   const [showSettings, setShowSettings] = useState(false);
   const [scrollPct, setScrollPct] = useState(0);
+
+  // Reading preferences persist across sessions.
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("gink.reader.theme", theme);
+      window.localStorage.setItem("gink.reader.fontSize", String(fontSize));
+    } catch { /* storage blocked — keep in-memory prefs */ }
+  }, [theme, fontSize]);
 
   // Text-selection note state
   const [selection, setSelection]         = useState<{ text: string; top: number; left: number } | null>(null);

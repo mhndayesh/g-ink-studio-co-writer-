@@ -10,7 +10,23 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Chapter, Character, PlotThread, PlotThreadSceneLink, Revelation, SceneCard, Story, World
+from app.db.models import (
+    Chapter,
+    Character,
+    CharacterIdentity,
+    CharacterRelationship,
+    CharacterState,
+    CharacterVoiceProfile,
+    PlaceIdentity,
+    PlotThread,
+    PlotThreadSceneLink,
+    RelationshipMask,
+    Revelation,
+    SceneCard,
+    Story,
+    VoiceException,
+    World,
+)
 
 
 async def story_to_markdown(db: AsyncSession, story_id: str) -> str:
@@ -169,6 +185,12 @@ async def import_bundle(db: AsyncSession, user_id: str, bundle: dict) -> str:
     scenes = snap.get("scenes", []) or []
     revelations = snap.get("revelations", []) or []
     thread_scene_links = snap.get("thread_scene_links", []) or []
+    identities = snap.get("identities", []) or []
+    masks = snap.get("masks", []) or []
+    states = snap.get("states", []) or []
+    places = snap.get("places", []) or []
+    voice_profiles = snap.get("voice_profiles", []) or []
+    voice_exceptions = snap.get("voice_exceptions", []) or []
 
     story = Story(
         user_id=user_id,
@@ -192,6 +214,7 @@ async def import_bundle(db: AsyncSession, user_id: str, bundle: dict) -> str:
     ))
 
     id_map: dict[str, str] = {}
+    rel_queue: list[tuple[str, dict]] = []
     for c in chars:
         new_char = Character(
             story_id=story.id,
@@ -211,6 +234,21 @@ async def import_bundle(db: AsyncSession, user_id: str, bundle: dict) -> str:
         await db.flush()
         if c.get("id"):
             id_map[c["id"]] = new_char.id
+        # Relationships are stored per-character in the snapshot.
+        for rel in (c.get("relationships") or []):
+            rel_queue.append((new_char.id, rel))
+
+    for source_id, rel in rel_queue:
+        target_id = id_map.get(rel.get("target_id") or "")
+        if not target_id or target_id == source_id or not rel.get("type"):
+            continue
+        db.add(CharacterRelationship(
+            story_id=story.id,
+            source_id=source_id,
+            target_id=target_id,
+            type=str(rel.get("type")).lower(),
+            description=rel.get("description", "") or "",
+        ))
 
     from app.db.models import Location
 
@@ -331,6 +369,93 @@ async def import_bundle(db: AsyncSession, user_id: str, bundle: dict) -> str:
             status=link.get("status", "touch"),
             strength=float(link.get("strength", 1.0) or 1.0),
             evidence=link.get("evidence", ""),
+        ))
+
+    # ── Voice Studio fidelity ────────────────────────────────────────────
+    for i in identities:
+        cid = id_map.get(i.get("character_id") or "")
+        if not cid:
+            continue
+        db.add(CharacterIdentity(
+            story_id=story.id,
+            character_id=cid,
+            core_personality=i.get("core_personality") or {},
+            behavioral_patterns=i.get("behavioral_patterns") or {},
+            voice_fingerprint=i.get("voice_fingerprint") or {},
+            short_profile=i.get("short_profile", "") or "",
+            build_method=i.get("build_method", "") or "",
+            completeness=i.get("completeness") or {},
+        ))
+    for m in masks:
+        cid = id_map.get(m.get("character_id") or "")
+        if not cid:
+            continue
+        db.add(RelationshipMask(
+            story_id=story.id,
+            character_id=cid,
+            audience_character_id=id_map.get(m.get("audience_character_id") or ""),
+            audience_label=m.get("audience_label", "") or "",
+            speech_style=m.get("speech_style", "") or "",
+            tells=m.get("tells", "") or "",
+            notes=m.get("notes", "") or "",
+        ))
+    for s in states:
+        cid = id_map.get(s.get("character_id") or "")
+        if not cid:
+            continue
+        db.add(CharacterState(
+            story_id=story.id,
+            character_id=cid,
+            chapter_id=chapter_id_map.get(s.get("chapter_id") or ""),
+            label=s.get("label", "") or "",
+            detail=s.get("detail", "") or "",
+            kind=s.get("kind", "temporary") or "temporary",
+            active=bool(s.get("active", True)),
+        ))
+    for p in places:
+        lid = loc_id_map.get(p.get("location_id") or "")
+        if not lid:
+            continue
+        db.add(PlaceIdentity(
+            story_id=story.id,
+            location_id=lid,
+            purpose=p.get("purpose", "") or "",
+            atmosphere=p.get("atmosphere", "") or "",
+            sensory_palette=p.get("sensory_palette") or {},
+            visual_anchors=p.get("visual_anchors") or [],
+            spatial_layout=p.get("spatial_layout", "") or "",
+            controls_space=p.get("controls_space", "") or "",
+            social_rules=p.get("social_rules", "") or "",
+            normal_behavior=p.get("normal_behavior", "") or "",
+            variations=p.get("variations") or {},
+            symbolic_motif=p.get("symbolic_motif", "") or "",
+        ))
+    for vp in voice_profiles:
+        cid = id_map.get(vp.get("character_id") or "")
+        if not cid:
+            continue
+        db.add(CharacterVoiceProfile(
+            story_id=story.id,
+            character_id=cid,
+            sample_count=int(vp.get("sample_count") or 0),
+            dialogue_words=int(vp.get("dialogue_words") or 0),
+            avg_sentence_words=float(vp.get("avg_sentence_words") or 0),
+            question_rate=float(vp.get("question_rate") or 0),
+            exclamation_rate=float(vp.get("exclamation_rate") or 0),
+            vocabulary_variety=float(vp.get("vocabulary_variety") or 0),
+            dialogue_share=float(vp.get("dialogue_share") or 0),
+            repeated_phrases=vp.get("repeated_phrases") or [],
+            stats=vp.get("stats") or {},
+        ))
+    for e in voice_exceptions:
+        db.add(VoiceException(
+            story_id=story.id,
+            chapter_id=chapter_id_map.get(e.get("chapter_id") or ""),
+            character_id=id_map.get(e.get("character_id") or ""),
+            fingerprint=str(e.get("fingerprint") or "")[:64],
+            line_excerpt=e.get("line_excerpt", "") or "",
+            note_kind=e.get("note_kind", "") or "",
+            reason=e.get("reason", "") or "",
         ))
 
     await db.commit()

@@ -1,50 +1,102 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
-// Debounced autosave hook. Fires `fn(value)` ~ `delay` ms after the last change.
-// Skips the initial render so we don't immediately re-save what we just loaded.
+export type SaveStatus = "idle" | "saving" | "saved" | "error";
+
+// Debounced autosave keyed by a record id.
 //
-// Crucially it also FLUSHES a still-pending save on unmount, route change, and
-// `beforeunload` — otherwise the cleanup just clears the timer and the last
-// <delay> ms of edits are silently dropped whenever you navigate away (switching
-// chapters/characters/scenes/etc. mid-type). The latest value + fn are held in
-// refs so the flush always saves what's actually on screen, not a stale closure.
-export function useDebouncedSave<T>(value: T, delay: number, fn: (v: T) => void) {
-  const first = useRef(true);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pending = useRef(false);
-  const latest = useRef(value);
+// Fixes two classes of data loss in the previous hook:
+//   1. Switching chapters/scenes/characters changed `value` without unmounting,
+//      so the cleanup cleared the pending timer and the previous record's last
+//      <delay> ms of typing were never saved. Now the pending value is stored
+//      per key and flushed the moment the key changes.
+//   2. No save status existed. `status` (and `error`) are returned so pages can
+//      show Saving / Saved / Failed instead of silently swallowing failures.
+//
+// Pending saves are also flushed on unmount and beforeunload.
+export function useDebouncedSave<T>(
+  value: T,
+  delay: number,
+  fn: (v: T) => void | Promise<unknown>,
+  key: string = "default",
+) {
+  const pending = useRef<Map<string, T>>(new Map());
+  const timers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // The save callback is captured PER KEY. Without this, switching records
+  // re-renders with a new callback closure (new activeId) before the old key
+  // flushes, and the previous record's draft would be PATCHed onto the new one.
+  const fns = useRef<Map<string, (v: T) => void | Promise<unknown>>>(new Map());
+  const latestKey = useRef(key);
+  const loadedKeys = useRef<Set<string>>(new Set());
   const fnRef = useRef(fn);
-  latest.current = value;
   fnRef.current = fn;
+  const [status, setStatus] = useState<SaveStatus>("idle");
+  const [error, setError] = useState<unknown>(null);
 
-  // Schedule a save whenever the value changes.
-  useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    pending.current = true;
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      pending.current = false;
-      timer.current = null;
-      fnRef.current(latest.current);
-    }, delay);
-    // Note: no flush here — a value change shouldn't force an immediate save.
-    return () => { if (timer.current) clearTimeout(timer.current); };
-  }, [value, delay]);
+  const flushKey = (k: string) => {
+    const timer = timers.current.get(k);
+    if (timer) {
+      clearTimeout(timer);
+      timers.current.delete(k);
+    }
+    if (!pending.current.has(k)) return;
+    const v = pending.current.get(k) as T;
+    pending.current.delete(k);
+    setStatus("saving");
+    const save = fns.current.get(k) ?? fnRef.current;
+    Promise.resolve()
+      .then(() => save(v))
+      .then(() => {
+        if (latestKey.current === k) setStatus("saved");
+      })
+      .catch((e) => {
+        // Keep the value pending so the next edit/flush retries it.
+        if (!pending.current.has(k)) pending.current.set(k, v);
+        if (latestKey.current === k) {
+          setStatus("error");
+          setError(e);
+        }
+      });
+  };
 
-  // Flush a pending save on unmount/navigation and on tab close. Defined inside
-  // the effect so it closes over the stable refs (pending/timer/fnRef/latest) and
-  // the same function instance is used for both the listener and the cleanup.
+  const flush = () => {
+    for (const k of Array.from(pending.current.keys())) flushKey(k);
+  };
+
   useEffect(() => {
-    const flush = () => {
-      if (!pending.current) return;
-      pending.current = false;
-      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
-      fnRef.current(latest.current);
-    };
-    window.addEventListener("beforeunload", flush);
+    const prev = latestKey.current;
+    if (prev !== key) {
+      // The record changed — save whatever was pending for the previous one.
+      flushKey(prev);
+      latestKey.current = key;
+      loadedKeys.current.add(key);
+      setStatus("idle");
+      setError(null);
+      return;
+    }
+    if (!loadedKeys.current.has(key)) {
+      // First render for this record is a load, not an edit.
+      loadedKeys.current.add(key);
+      return;
+    }
+    pending.current.set(key, value);
+    fns.current.set(key, fnRef.current);
+    const existing = timers.current.get(key);
+    if (existing) clearTimeout(existing);
+    timers.current.set(
+      key,
+      setTimeout(() => flushKey(key), delay),
+    );
+  }, [value, delay, key]);
+
+  useEffect(() => {
+    const onUnload = () => flush();
+    window.addEventListener("beforeunload", onUnload);
     return () => {
-      window.removeEventListener("beforeunload", flush);
+      window.removeEventListener("beforeunload", onUnload);
       flush();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  return { status, error, flush };
 }

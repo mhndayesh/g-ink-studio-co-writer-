@@ -155,7 +155,16 @@ export async function createStory(payload: { title?: string; genre?: string; pal
 export async function getStory(id: string) {
   return (await request<{ story: any }>(`/v1/stories/${id}`)).story;
 }
-export async function updateStory(id: string, patch: { title?: string; genre?: string; language?: "en" | "ar"; palette_idx?: number; cover_image_url?: string | null }) {
+export async function updateStory(id: string, patch: {
+  title?: string;
+  genre?: string;
+  language?: "en" | "ar";
+  palette_idx?: number;
+  cover_image_url?: string | null;
+  target_word_count?: number | null;
+  daily_word_target?: number | null;
+  deadline?: string | null;
+}) {
   return (await request<{ story: any }>(`/v1/stories/${id}`, { method: "PATCH", body: JSON.stringify(patch) })).story;
 }
 export async function deleteStory(id: string) {
@@ -308,16 +317,62 @@ export async function patchChapter(id: string, chapterId: string, patch: any) {
 export async function deleteChapter(id: string, chapterId: string) {
   return request(`/v1/stories/${id}/chapters/${chapterId}`, { method: "DELETE" });
 }
-
-// ── Flow ─────────────────────────────────────────────────────────────
-export async function flowPolish(id: string, raw: string, notes = "", scene?: { scene_character_ids?: string[]; scene_location_id?: string | null }) {
-  return request<{ polished: string; fallback: boolean }>(`/v1/stories/${id}/flow/polish`, {
-    method: "POST",
-    body: JSON.stringify({ raw, notes, scene_character_ids: scene?.scene_character_ids ?? [], scene_location_id: scene?.scene_location_id ?? null }),
+export async function reorderChapters(id: string, chapterIds: string[]) {
+  return request<{ order: string[] }>(`/v1/stories/${id}/chapters/order`, {
+    method: "PUT",
+    body: JSON.stringify({ chapter_ids: chapterIds }),
   });
 }
-export async function flowExtract(id: string, polished: string) {
-  return request<any>(`/v1/stories/${id}/flow/extract`, { method: "POST", body: JSON.stringify({ polished }) });
+export async function listChapterRevisions(id: string, chapterId: string) {
+  return (await request<{ revisions: any[] }>(`/v1/stories/${id}/chapters/${chapterId}/revisions`)).revisions;
+}
+export async function restoreChapterRevision(id: string, chapterId: string, revisionId: string) {
+  return (await request<{ chapter: any }>(
+    `/v1/stories/${id}/chapters/${chapterId}/revisions/${revisionId}/restore`,
+    { method: "POST" },
+  )).chapter;
+}
+export async function storyStats(id: string, days = 30) {
+  return request<any>(`/v1/stories/${id}/stats?days=${days}`);
+}
+export async function searchStory(id: string, q: string, limit = 30) {
+  return request<{ query: string; hits: any[] }>(
+    `/v1/stories/${id}/search?q=${encodeURIComponent(q)}&limit=${limit}`,
+  );
+}
+export async function listNotes(id: string) {
+  return (await request<{ notes: any[] }>(`/v1/stories/${id}/notes`)).notes;
+}
+export async function createNote(id: string, payload: { title: string; body: string }) {
+  return (await request<{ note: any }>(`/v1/stories/${id}/notes`, { method: "POST", body: JSON.stringify(payload) })).note;
+}
+export async function patchNote(id: string, noteId: string, payload: { title: string; body: string }) {
+  return (await request<{ note: any }>(`/v1/stories/${id}/notes/${noteId}`, { method: "PATCH", body: JSON.stringify(payload) })).note;
+}
+export async function deleteNote(id: string, noteId: string) {
+  return request(`/v1/stories/${id}/notes/${noteId}`, { method: "DELETE" });
+}
+export async function listCheckReports(id: string, limit = 20) {
+  return (await request<{ reports: any[] }>(`/v1/stories/${id}/check/reports?limit=${limit}`)).reports;
+}
+export async function listStoryVersions(id: string) {
+  return (await request<{ versions: any[] }>(`/v1/stories/${id}/versions`)).versions;
+}
+
+// ── Flow ─────────────────────────────────────────────────────────────
+export async function flowPolish(id: string, raw: string, notes = "", scene?: { scene_character_ids?: string[]; scene_location_id?: string | null }, signal?: AbortSignal) {
+  return request<{ polished: string; fallback: boolean; context_token?: string | null }>(`/v1/stories/${id}/flow/polish`, {
+    method: "POST",
+    body: JSON.stringify({ raw, notes, scene_character_ids: scene?.scene_character_ids ?? [], scene_location_id: scene?.scene_location_id ?? null }),
+    signal,
+  });
+}
+export async function flowExtract(id: string, polished: string, opts?: { context_token?: string | null; signal?: AbortSignal }) {
+  return request<any>(`/v1/stories/${id}/flow/extract`, {
+    method: "POST",
+    body: JSON.stringify({ polished, context_token: opts?.context_token ?? null }),
+    signal: opts?.signal,
+  });
 }
 export async function flowApprove(id: string, payload: {
   raw: string;
@@ -328,16 +383,19 @@ export async function flowApprove(id: string, payload: {
   chapter_summary?: string;
   target_chapter_id?: string | null;
   target_chapter_number?: number | null;
-}) {
+  allow_fallback?: boolean;
+}, idempotencyKey?: string) {
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   return request<{ chapter_id: string; new_character_ids: string[]; added_themes: string[]; version_no: number }>(
     `/v1/stories/${id}/flow/approve`,
-    { method: "POST", body: JSON.stringify(payload) },
+    { method: "POST", headers, body: JSON.stringify(payload) },
   );
 }
-export async function flowEnhance(id: string, raw: string) {
+export async function flowEnhance(id: string, raw: string, signal?: AbortSignal) {
   return request<{ language: string; enhanced: string; notes: string; fallback: boolean }>(
     `/v1/stories/${id}/flow/enhance`,
-    { method: "POST", body: JSON.stringify({ raw }) },
+    { method: "POST", body: JSON.stringify({ raw }), signal },
   );
 }
 export async function flowSaveDraft(id: string, payload: any) {

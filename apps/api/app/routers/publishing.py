@@ -74,16 +74,21 @@ async def push_chapters(
     db: AsyncSession = Depends(get_db),
     idempotency_key: Annotated[str | None, Header()] = None,
 ):
-    # Guard against a retried push creating redundant chapter versions.
+    # Reserve first so concurrent retries cannot create redundant versions.
     scope = f"publish.push:{pub_id}"
-    replayed = await idempotency.replay(db, user.id, idempotency_key, scope)
+    req_hash = idempotency.payload_hash(req.model_dump())
+    replayed = await idempotency.reserve(db, user.id, idempotency_key, scope, req_hash)
     if replayed is not None:
         return envelope_ok(replayed)
 
-    pushed = await svc.push_chapters(pub_id, req, user, db)
-    await db.commit()
+    try:
+        pushed = await svc.push_chapters(pub_id, req, user, db)
+        await db.commit()
+    except Exception:
+        await idempotency.release(db, user.id, idempotency_key, scope)
+        raise
     result = {"pushed": len(pushed)}
-    await idempotency.remember(db, user.id, idempotency_key, scope, result)
+    await idempotency.complete(db, user.id, idempotency_key, scope, result)
     return envelope_ok(result)
 
 

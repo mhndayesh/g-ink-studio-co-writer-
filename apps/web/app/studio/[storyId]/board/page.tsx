@@ -51,7 +51,7 @@ export default function BoardPage() {
       <h2 className="font-display text-xl mb-3">{c.chapters}</h2>
       <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3 mb-8">
         {(chapters || []).map((chapter: any) => (
-          <Link key={chapter.id} href={`/studio/${storyId}/chapters`}>
+          <Link key={chapter.id} href={`/studio/${storyId}/chapters?chapter=${chapter.id}`}>
             <Card className="hover:border-ink-gold/50 transition-colors">
               <p className="text-xs text-ink-text2">{c.chapterShort} {formatNumber(chapter.number)}</p>
               <h3 className="font-display text-lg mt-1">{chapter.title || t("common.untitled")}</h3>
@@ -76,10 +76,12 @@ export default function BoardPage() {
       <h2 className="font-display text-xl mb-3">{c.sceneCards}</h2>
       <div className="grid gap-2 md:grid-cols-2 lg:grid-cols-3">
         {(scenes || []).map((s: any) => (
-          <Card key={s.id}>
-            {s.beat && <p className="text-xs uppercase tracking-wider text-ink-text2">{s.beat}</p>}
-            <p className="text-sm mt-1">{s.content}</p>
-          </Card>
+          <Link key={s.id} href={`/studio/${storyId}/scenes?scene=${s.id}`}>
+            <Card className="hover:border-ink-gold/50 transition-colors">
+              {s.beat && <p className="text-xs uppercase tracking-wider text-ink-text2">{s.beat}</p>}
+              <p className="text-sm mt-1">{s.title || s.summary || s.content}</p>
+            </Card>
+          </Link>
         ))}
         {(!scenes || scenes.length === 0) && <Card><p className="text-ink-text2 text-sm">{c.noScenes}</p></Card>}
       </div>

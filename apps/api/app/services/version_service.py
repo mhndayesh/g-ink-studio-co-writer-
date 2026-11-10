@@ -1,8 +1,7 @@
 """Snapshot a story's full state into the immutable story_versions table.
 
-Snapshot shape matches Story_Forge_Docs.md §6 + production-stage entities,
-so a `story_versions.snapshot` is interchangeable with a Story Forge
-backup JSON.
+Snapshot shape covers all story content plus production-stage entities, so a
+`story_versions.snapshot` is a complete, restorable backup of the story.
 """
 from __future__ import annotations
 
@@ -12,17 +11,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import (
     Chapter,
     Character,
+    CharacterIdentity,
     CharacterRelationship,
+    CharacterState,
     CharacterVoiceProfile,
     Faction,
     Location,
+    PlaceIdentity,
     PlotThread,
     PlotThreadSceneLink,
+    RelationshipMask,
     Revelation,
     SceneCard,
     Story,
     StoryVersion,
     Theme,
+    VoiceException,
     World,
 )
 
@@ -46,6 +50,11 @@ async def snapshot(db: AsyncSession, story_id: str, *, note: str = "") -> StoryV
     revelations = (await db.execute(select(Revelation).where(Revelation.story_id == story_id))).scalars().all()
     thread_scene_links = (await db.execute(select(PlotThreadSceneLink).where(PlotThreadSceneLink.story_id == story_id))).scalars().all()
     voice_profiles = (await db.execute(select(CharacterVoiceProfile).where(CharacterVoiceProfile.story_id == story_id))).scalars().all()
+    identities = (await db.execute(select(CharacterIdentity).where(CharacterIdentity.story_id == story_id))).scalars().all()
+    masks = (await db.execute(select(RelationshipMask).where(RelationshipMask.story_id == story_id))).scalars().all()
+    states = (await db.execute(select(CharacterState).where(CharacterState.story_id == story_id))).scalars().all()
+    places = (await db.execute(select(PlaceIdentity).where(PlaceIdentity.story_id == story_id))).scalars().all()
+    voice_exceptions = (await db.execute(select(VoiceException).where(VoiceException.story_id == story_id))).scalars().all()
 
     def char_to_dict(c: Character) -> dict:
         return {
@@ -154,6 +163,67 @@ async def snapshot(db: AsyncSession, story_id: str, *, note: str = "") -> StoryV
                 "stats": dict(p.stats or {}),
             }
             for p in voice_profiles
+        ],
+        "identities": [
+            {
+                "character_id": i.character_id,
+                "core_personality": dict(i.core_personality or {}),
+                "behavioral_patterns": dict(i.behavioral_patterns or {}),
+                "voice_fingerprint": dict(i.voice_fingerprint or {}),
+                "short_profile": i.short_profile,
+                "build_method": i.build_method,
+                "completeness": dict(i.completeness or {}),
+            }
+            for i in identities
+        ],
+        "masks": [
+            {
+                "character_id": m.character_id,
+                "audience_character_id": m.audience_character_id,
+                "audience_label": m.audience_label,
+                "speech_style": m.speech_style,
+                "tells": m.tells,
+                "notes": m.notes,
+            }
+            for m in masks
+        ],
+        "states": [
+            {
+                "character_id": s.character_id,
+                "chapter_id": s.chapter_id,
+                "label": s.label,
+                "detail": s.detail,
+                "kind": s.kind,
+                "active": s.active,
+            }
+            for s in states
+        ],
+        "places": [
+            {
+                "location_id": p.location_id,
+                "purpose": p.purpose,
+                "atmosphere": p.atmosphere,
+                "sensory_palette": dict(p.sensory_palette or {}),
+                "visual_anchors": list(p.visual_anchors or []),
+                "spatial_layout": p.spatial_layout,
+                "controls_space": p.controls_space,
+                "social_rules": p.social_rules,
+                "normal_behavior": p.normal_behavior,
+                "variations": dict(p.variations or {}),
+                "symbolic_motif": p.symbolic_motif,
+            }
+            for p in places
+        ],
+        "voice_exceptions": [
+            {
+                "chapter_id": e.chapter_id,
+                "character_id": e.character_id,
+                "fingerprint": e.fingerprint,
+                "line_excerpt": e.line_excerpt,
+                "note_kind": e.note_kind,
+                "reason": e.reason,
+            }
+            for e in voice_exceptions
         ],
     }
 

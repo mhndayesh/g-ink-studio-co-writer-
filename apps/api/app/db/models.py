@@ -1,6 +1,6 @@
 """SQLAlchemy ORM models for G-Ink Novel Studio.
 
-Schema mirrors the data model in Story_Forge_Docs.md §6 plus production-stage
+Covers the story data model (world, characters, chapters) plus production-stage
 entities (scenes, threads, scripts) and bookkeeping tables (versions, llm_runs).
 """
 from __future__ import annotations
@@ -193,6 +193,9 @@ class IdempotencyKey(Base):
     scope: Mapped[str] = mapped_column(String(120))
     idem_key: Mapped[str] = mapped_column(String(128))
     response: Mapped[dict] = mapped_column(JSON, default=dict)  # the original envelope `data`
+    # Hash of the request payload. A reused key with a different payload is
+    # rejected instead of silently replaying the old response.
+    request_hash: Mapped[str] = mapped_column(String(64), default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     __table_args__ = (
@@ -223,7 +226,11 @@ class Story(Base):
     language: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
     palette_idx: Mapped[int] = mapped_column(Integer, default=0)
     cover_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # uploaded path or http(s) URL
-    graph_status: Mapped[str] = mapped_column(String(32), default="unknown")  # unknown|ok|unavailable
+    # Writing goals (author-facing progress). NULL = no goal set.
+    target_word_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    daily_word_target: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    graph_status: Mapped[str] = mapped_column(String(32), default="unknown")  # unknown|ok|pending|unavailable
     # When the Neo4j projection last succeeded. NULL = never synced. A background
     # reconciler (graph_service.reconcile_stale_graphs) retries any story whose
     # graph_status != "ok" so a Neo4j outage during approve self-heals later.
@@ -316,6 +323,9 @@ class Chapter(Base):
     title: Mapped[str] = mapped_column(String(255), default="")
     content: Mapped[str] = mapped_column(Text, default="")
     summary: Mapped[str] = mapped_column(Text, default="")
+    # Real word count (computed on every save) — the hub stats used to
+    # approximate with len(content)//5, which disagreed with everything else.
+    word_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     cover_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # optional per-chapter cover
     pov_character_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("characters.id", ondelete="SET NULL"), nullable=True)
     location_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("locations.id", ondelete="SET NULL"), nullable=True)
@@ -329,7 +339,10 @@ class Chapter(Base):
 
     story: Mapped[Story] = relationship("Story", back_populates="chapters")
 
-    __table_args__ = (Index("ix_chapters_story_number", "story_id", "number"),)
+    __table_args__ = (
+        Index("ix_chapters_story_number", "story_id", "number"),
+        Index("uq_chapters_story_number", "story_id", "number", unique=True),
+    )
     __mapper_args__ = {"version_id_col": version_id}
 
 
@@ -651,11 +664,64 @@ class FlowDraft(Base):
     polished: Mapped[str] = mapped_column(Text, default="")
     extracted: Mapped[dict] = mapped_column(JSON, default=dict)
     notes: Mapped[str] = mapped_column(Text, default="")
+    # Workflow state so a reload resumes exactly where the writer was instead of
+    # dumping them back into the raw editor while polished/extracted sit unused.
+    phase: Mapped[str] = mapped_column(String(32), default="writing", server_default="writing")
+    target: Mapped[str] = mapped_column(String(64), default="new", server_default="new")
+    chapter_title: Mapped[str] = mapped_column(String(255), default="", server_default="")
+    chapter_summary: Mapped[str] = mapped_column(Text, default="", server_default="")
+    scene_character_ids: Mapped[list[str]] = mapped_column(JSON, default=list)
+    scene_location_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    enhancer_on: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
     __table_args__ = (Index("ix_flow_drafts_story_approved", "story_id", "approved_at"),)
+
+
+class ChapterRevision(Base):
+    """Immutable pre-edit copy of a chapter.
+
+    Written BEFORE an overwrite or a manual edit mutates the live chapter, so a
+    bad approve/keystroke is recoverable. `source` names what changed it
+    (flow|manual|restore)."""
+    __tablename__ = "chapter_revisions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    story_id: Mapped[str] = mapped_column(String(32), ForeignKey("stories.id", ondelete="CASCADE"), index=True)
+    chapter_id: Mapped[str] = mapped_column(String(32), ForeignKey("chapters.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    content: Mapped[str] = mapped_column(Text, default="")
+    summary: Mapped[str] = mapped_column(Text, default="")
+    word_count: Mapped[int] = mapped_column(Integer, default=0)
+    source: Mapped[str] = mapped_column(String(24), default="manual")  # manual|flow|restore
+    note: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+    __table_args__ = (Index("ix_chapter_revisions_chapter_created", "chapter_id", "created_at"),)
+
+
+class StoryNote(Base):
+    """Author-facing research / scratch note for a story (not reader notes)."""
+    __tablename__ = "story_notes"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True, default=_uuid)
+    story_id: Mapped[str] = mapped_column(String(32), ForeignKey("stories.id", ondelete="CASCADE"), index=True)
+    title: Mapped[str] = mapped_column(String(255), default="")
+    body: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
+class WritingDay(Base):
+    """Per-story daily word delta — powers writing stats and streaks."""
+    __tablename__ = "writing_days"
+
+    story_id: Mapped[str] = mapped_column(String(32), ForeignKey("stories.id", ondelete="CASCADE"), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)  # YYYY-MM-DD (UTC)
+    words: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 
 
 class StoryVersion(Base):

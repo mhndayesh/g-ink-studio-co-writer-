@@ -1,8 +1,8 @@
 "use client";
-import { useParams } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Plus, Sparkles, StopCircle, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, History, Plus, Sparkles, StopCircle, Trash2 } from "lucide-react";
 import * as api from "@/lib/api";
 import { Btn, Card, FG, Inp, PageHdr, QueryError, Ta, Tag } from "@/components/ui/Primitives";
 import { CoverUploader } from "@/components/ui/CoverUploader";
@@ -10,6 +10,8 @@ import { useDebouncedSave } from "@/lib/debounce";
 import { AiLockNotice } from "@/components/billing/AiLockNotice";
 import { useEntitlement } from "@/lib/useEntitlement";
 import { useI18n } from "@/lib/i18n";
+
+const COUNT_WORDS = (text: string) => (text.match(/[\p{L}\p{N}'’-]+/gu) || []).length;
 
 const COPY = {
   en: {
@@ -47,6 +49,18 @@ const COPY = {
     draftErrorSuffix: "— please try again.",
     emptyResult:
       "The model returned nothing. Try rephrasing your instruction, or check your AI model in Settings.",
+    saving: "Saving…",
+    saved: "Saved",
+    saveFailed: "Save failed — retrying on next edit",
+    words: "words",
+    moveUp: "Move up",
+    moveDown: "Move down",
+    revisions: "History",
+    revisionsTitle: "Chapter history",
+    noRevisions: "No saved revisions yet. Edits are snapshotted automatically.",
+    restore: "Restore",
+    restoreConfirm: "Restore this revision? The current text is saved to history first.",
+    close: "Close",
   },
   ar: {
     title: "❧ الفصول",
@@ -81,6 +95,18 @@ const COPY = {
     draftFailedFallback: "تعذّر توليد المسودة.",
     draftErrorSuffix: "— حاول مرة أخرى.",
     emptyResult: "لم يُرجع النموذج أي نص. أعد صياغة تعليماتك، أو تحقّق من نموذج الذكاء الاصطناعي في الإعدادات.",
+    saving: "جارٍ الحفظ…",
+    saved: "تم الحفظ",
+    saveFailed: "فشل الحفظ — ستتم إعادة المحاولة عند التعديل التالي",
+    words: "كلمة",
+    moveUp: "نقل لأعلى",
+    moveDown: "نقل لأسفل",
+    revisions: "السجل",
+    revisionsTitle: "سجل الفصل",
+    noRevisions: "لا توجد نسخ محفوظة بعد. تُحفظ التعديلات تلقائيًا.",
+    restore: "استعادة",
+    restoreConfirm: "هل تريد استعادة هذه النسخة؟ سيُحفظ النص الحالي في السجل أولًا.",
+    close: "إغلاق",
   },
 } as const;
 
@@ -97,9 +123,23 @@ export default function ChaptersPage() {
   const { data: scenes } = useQuery({ queryKey: ["scenes", storyId], queryFn: () => api.listScenes(storyId) });
   const { data: threads } = useQuery({ queryKey: ["threads", storyId], queryFn: () => api.listThreads(storyId) });
 
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [showHistory, setShowHistory] = useState(false);
+
+  // Deep-linkable selection: /chapters?chapter=<id> (used by the Plot Board).
+  useEffect(() => {
+    const fromUrl = searchParams.get("chapter");
+    if (fromUrl) setActiveId(fromUrl);
+  }, [searchParams]);
+
   useEffect(() => {
     if (!activeId && chapters && chapters.length > 0) setActiveId(chapters[0].id);
+    // If a deep-linked chapter no longer exists, fall back to the first one.
+    if (activeId && chapters && chapters.length > 0 && !chapters.some((c: any) => c.id === activeId)) {
+      setActiveId(chapters[0].id);
+    }
   }, [chapters, activeId]);
 
   const active = useMemo(() => chapters?.find((c: any) => c.id === activeId) || null, [chapters, activeId]);
@@ -113,7 +153,7 @@ export default function ChaptersPage() {
 
   const create = useMutation({
     mutationFn: () => api.createChapter(storyId, { title: c.defaultTitle, content: "" }),
-    onSuccess: (c) => { qc.invalidateQueries({ queryKey: ["chapters", storyId] }); setActiveId(c.id); },
+    onSuccess: (c) => { qc.invalidateQueries({ queryKey: ["chapters", storyId] }); selectChapter(c.id); },
   });
 
   const patch = useMutation({
@@ -131,14 +171,56 @@ export default function ChaptersPage() {
     },
   });
 
-  // Local editable form, debounced into the API
-  const [draft, setDraft] = useState<any>(null);
-  useEffect(() => { setDraft(active ? { ...active } : null); }, [active]);
-  useDebouncedSave(draft, 900, (d) => {
-    if (!d || !activeId) return;
-    const { id, story_id, created_at, updated_at, ...patchable } = d;
-    patch.mutate(patchable);
+  const move = useMutation({
+    mutationFn: async ({ id, dir }: { id: string; dir: -1 | 1 }) => {
+      const ordered = [...(chapters || [])].sort((a: any, b: any) => a.number - b.number).map((x: any) => x.id);
+      const i = ordered.indexOf(id);
+      const j = i + dir;
+      if (i < 0 || j < 0 || j >= ordered.length) return null;
+      [ordered[i], ordered[j]] = [ordered[j], ordered[i]];
+      return api.reorderChapters(storyId, ordered);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["chapters", storyId] });
+      qc.invalidateQueries({ queryKey: ["story", storyId] });
+    },
   });
+
+  const revisions = useQuery({
+    queryKey: ["chapter-revisions", storyId, activeId],
+    queryFn: () => api.listChapterRevisions(storyId, activeId!),
+    enabled: !!activeId && showHistory,
+  });
+
+  const restore = useMutation({
+    mutationFn: (revisionId: string) => api.restoreChapterRevision(storyId, activeId!, revisionId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["chapters", storyId] });
+      qc.invalidateQueries({ queryKey: ["chapter-revisions", storyId, activeId] });
+      qc.invalidateQueries({ queryKey: ["story", storyId] });
+    },
+  });
+
+  // Local editable form. Hydrate ONLY when the active record changes — never on
+  // a background refetch, which used to clobber keystrokes typed mid-save.
+  const [draft, setDraft] = useState<any>(null);
+  useEffect(() => {
+    if (active && active.id === activeId) setDraft({ ...active });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId, active?.id]);
+
+  const { status: saveStatus, flush } = useDebouncedSave(draft, 900, (d) => {
+    if (!d || !activeId) return;
+    const { id, story_id, created_at, updated_at, word_count, ...patchable } = d;
+    patch.mutate(patchable);
+  }, activeId ?? "none");
+
+  function selectChapter(id: string) {
+    flush(); // persist the previous chapter's last keystrokes immediately
+    setActiveId(id);
+    setShowHistory(false);
+    router.replace(`/studio/${storyId}/chapters?chapter=${id}`, { scroll: false });
+  }
 
   // ── Writing Companion (streaming) ───────────────────────────────────────────
   const [instruction, setInstruction] = useState("");
@@ -214,17 +296,31 @@ export default function ChaptersPage() {
     <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 lg:gap-6 max-w-7xl">
       <aside>
         <PageHdr title={c.title} />
-        <Btn variant="primary" className="w-full mb-3" onClick={() => create.mutate()}><Plus size={14}/> {c.newChapter}</Btn>
+        <Btn variant="primary" className="w-full mb-3" disabled={create.isPending} onClick={() => create.mutate()}><Plus size={14}/> {c.newChapter}</Btn>
         {chaptersError && <div className="mb-3"><QueryError error={chaptersErr} retry={refetchChapters} what={c.yourChapters} /></div>}
         <ul className="space-y-1">
-          {(chapters || []).map((chapter: any) => (
-            <li key={chapter.id}>
+          {(chapters || []).map((chapter: any, idx: number, arr: any[]) => (
+            <li key={chapter.id} className="group flex items-center gap-1">
               <button
-                onClick={() => setActiveId(chapter.id)}
-                className={`w-full text-start px-3 py-2 rounded text-sm ${activeId === chapter.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}
+                onClick={() => selectChapter(chapter.id)}
+                className={`flex-1 text-start px-3 py-2 rounded text-sm ${activeId === chapter.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}
               >
                 <span className="text-ink-text3 me-1">{formatNumber(chapter.number)}.</span> {chapter.title || t("common.untitled")}
               </button>
+              <span className="flex flex-col opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  aria-label={c.moveUp}
+                  disabled={idx === 0 || move.isPending}
+                  onClick={() => move.mutate({ id: chapter.id, dir: -1 })}
+                  className="text-ink-text3 hover:text-ink-text disabled:opacity-30"
+                ><ArrowUp size={12}/></button>
+                <button
+                  aria-label={c.moveDown}
+                  disabled={idx === arr.length - 1 || move.isPending}
+                  onClick={() => move.mutate({ id: chapter.id, dir: 1 })}
+                  className="text-ink-text3 hover:text-ink-text disabled:opacity-30"
+                ><ArrowDown size={12}/></button>
+              </span>
             </li>
           ))}
         </ul>
@@ -236,13 +332,55 @@ export default function ChaptersPage() {
           <>
             <PageHdr
               title={c.chapterTitle.replace("{n}", formatNumber(draft.number))}
-              subtitle={c.autosave}
+              subtitle={
+                saveStatus === "saving" ? c.saving
+                  : saveStatus === "error" ? c.saveFailed
+                    : saveStatus === "saved" ? c.saved
+                      : c.autosave
+              }
               right={
-                <Btn variant="ghost" onClick={() => { if (confirm(c.deleteConfirm)) del.mutate(); }}>
-                  <Trash2 size={14}/> {t("common.delete")}
-                </Btn>
+                <div className="flex items-center gap-2">
+                  <Btn variant="ghost" onClick={() => setShowHistory(v => !v)}>
+                    <History size={14}/> {c.revisions}
+                  </Btn>
+                  <Btn variant="ghost" onClick={() => { if (confirm(c.deleteConfirm)) del.mutate(); }}>
+                    <Trash2 size={14}/> {t("common.delete")}
+                  </Btn>
+                </div>
               }
             />
+
+            {showHistory && (
+              <Card className="mb-4">
+                <div className="flex items-center justify-between mb-2">
+                  <h3 className="font-display text-lg">{c.revisionsTitle}</h3>
+                  <Btn variant="ghost" onClick={() => setShowHistory(false)}>{c.close}</Btn>
+                </div>
+                {revisions.isLoading && <p className="text-sm text-ink-text2">{t("common.loading")}</p>}
+                {revisions.isError && <QueryError error={revisions.error} retry={revisions.refetch} what={c.revisionsTitle} />}
+                {!revisions.isLoading && (revisions.data || []).length === 0 && (
+                  <p className="text-sm text-ink-text3">{c.noRevisions}</p>
+                )}
+                <ul className="space-y-1">
+                  {(revisions.data || []).map((rev: any) => (
+                    <li key={rev.id} className="flex items-center justify-between gap-2 text-sm py-1.5 px-2 rounded hover:bg-ink-surface2">
+                      <span className="truncate">
+                        <span className="text-ink-text3 me-2">{new Date(rev.created_at).toLocaleString()}</span>
+                        {rev.title || t("common.untitled")}
+                        <span className="text-ink-text3 ms-2">{formatNumber(rev.word_count)} {c.words}</span>
+                      </span>
+                      <Btn
+                        variant="ghost"
+                        disabled={restore.isPending}
+                        onClick={() => {
+                          if (confirm(c.restoreConfirm)) restore.mutate(rev.id);
+                        }}
+                      >{c.restore}</Btn>
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
 
             <Card className="mb-4">
               <div className="grid gap-3 md:grid-cols-2">
@@ -276,6 +414,9 @@ export default function ChaptersPage() {
               <FG label={c.manuscript}>
                 <Ta rows={20} value={draft.content || ""} onChange={e => setDraft({ ...draft, content: e.target.value })} className="leading-relaxed text-base" />
               </FG>
+              <p className="text-xs text-ink-text3 mt-2">
+                {formatNumber(COUNT_WORDS(draft.content || ""))} {c.words}
+              </p>
             </Card>
 
             {activeScenes.length > 0 && (

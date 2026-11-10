@@ -239,6 +239,82 @@ async def _drop_legacy_collection(client, story_id: str) -> None:
         log.debug("legacy collection cleanup failed: %s", e)
 
 
+async def _delete_chapter_points(client, story_id: str, chapter_id: str) -> None:
+    """Remove this chapter's points (chapter chunks + its scene cards)."""
+    from qdrant_client.http.models import FieldCondition, Filter, FilterSelector, MatchValue
+
+    try:
+        await client.delete(
+            collection_name=COLLECTION,
+            points_selector=FilterSelector(
+                filter=Filter(must=[
+                    FieldCondition(key="story_id", match=MatchValue(value=story_id)),
+                    FieldCondition(key="chapter_id", match=MatchValue(value=chapter_id)),
+                ])
+            ),
+        )
+    except Exception as e:
+        log.debug("delete chapter points failed: %s", e)
+
+
+async def index_chapter(db: AsyncSession, user: User, story_id: str, chapter_id: str) -> dict:
+    """Incrementally (re-)embed ONE chapter and its scenes.
+
+    Approve used to leave vectors stale; re-embedding the whole story on every
+    approve would be wasteful (and metered). This touches only the chapter that
+    changed, which is what Graph-RAG needs to answer questions about it.
+    """
+    client = _get_client()
+    if client is None:
+        return {"indexed": 0, "reason": "qdrant_unavailable"}
+
+    chapter = await db.get(Chapter, chapter_id)
+    if chapter is None or chapter.story_id != story_id:
+        return {"indexed": 0, "reason": "chapter_not_found"}
+
+    texts: list[str] = []
+    payloads: list[dict] = []
+    ids: list[str] = []
+    for idx, chunk in enumerate(_chunk_text(chapter.content)):
+        texts.append(chunk)
+        payloads.append({"kind": "chapter", "chapter_id": chapter.id, "chunk_idx": idx, "title": chapter.title, "number": chapter.number})
+        ids.append(_point_id(story_id, "chapter", chapter.id, idx))
+
+    scenes = (
+        await db.execute(select(SceneCard).where(SceneCard.chapter_id == chapter_id))
+    ).scalars().all()
+    for sc in scenes:
+        scene_text = _scene_text(sc)
+        if scene_text:
+            texts.append(scene_text)
+            payloads.append({"kind": "scene", "scene_id": sc.id, "chapter_id": chapter_id, "ordinal": sc.ordinal, "title": sc.title})
+            ids.append(_point_id(story_id, "scene", sc.id, 0))
+
+    try:
+        if not texts:
+            await _delete_chapter_points(client, story_id, chapter_id)
+            return {"indexed": 0, "reason": "empty"}
+        from app.services import llm_service
+        vectors = await llm_service.embed(db, user, texts, story_id=story_id)
+        if not vectors:
+            return {"indexed": 0, "reason": "no_vectors"}
+        dim = len(vectors[0])
+        if not await ensure_collection(client, COLLECTION, dim):
+            return {"indexed": 0, "reason": "dim_mismatch"}
+        await _delete_chapter_points(client, story_id, chapter_id)
+        from qdrant_client.http.models import PointStruct
+
+        points = [
+            PointStruct(id=ids[i], vector=vec, payload={"text": texts[i], "story_id": story_id, **payloads[i]})
+            for i, vec in enumerate(vectors)
+        ]
+        await client.upsert(collection_name=COLLECTION, points=points)
+        return {"indexed": len(points)}
+    except Exception as e:
+        log.warning("chapter index failed: %s", e)
+        return {"indexed": 0, "reason": str(e)}
+
+
 async def index_story(db: AsyncSession, user: User, story_id: str) -> dict:
     """(Re-)embed all chapters, character profiles, and scene cards for a story.
 

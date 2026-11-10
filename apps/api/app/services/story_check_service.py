@@ -11,6 +11,7 @@ import logging
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.prompt_safety import fence, security_clause
+from app.core.errors import NotFound
 from app.db.models import Chapter, ContinuityReport, User
 from app.db.schemas import CheckFinding, RevisionPass, StoryCheckResponse
 from app.services import llm_service, rag_service
@@ -70,7 +71,7 @@ async def check(
     if chapter_id:
         chapter = await db.get(Chapter, chapter_id)
     if chapter_id and (chapter is None or chapter.story_id != story_id):
-        raise ValueError("chapter not found")
+        raise NotFound("Chapter not found")
 
     # Pull a graph slice keyed on the chapter content (uses character mentions to find subgraphs)
     query = (

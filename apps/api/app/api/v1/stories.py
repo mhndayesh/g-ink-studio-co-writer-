@@ -1,10 +1,21 @@
 from fastapi import APIRouter, Query
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 from app.core.deps import CurrentUser, DB, get_user_story
 from app.core.errors import envelope_ok
-from app.db.models import Chapter, Character, Story, World
-from app.db.schemas import StoryCreate, StoryOut, StoryStats, StoryUpdate
+from app.db.models import (
+    Chapter,
+    Character,
+    Faction,
+    Location,
+    PlotThread,
+    SceneCard,
+    Story,
+    StoryNote,
+    World,
+)
+from app.db.schemas import SearchHit, SearchResponse, StoryCreate, StoryOut, StoryStats, StoryUpdate
+from app.services import text_stats
 
 router = APIRouter()
 
@@ -12,12 +23,22 @@ router = APIRouter()
 async def _story_out(db, story: Story) -> dict:
     chapter_count = await db.scalar(select(func.count()).where(Chapter.story_id == story.id)) or 0
     character_count = await db.scalar(select(func.count()).where(Character.story_id == story.id)) or 0
-    word_count = await db.scalar(select(func.coalesce(func.sum(func.length(Chapter.content)), 0)).where(Chapter.story_id == story.id)) or 0
-    # cheap word approximation: bytes / 5
-    words = int(word_count) // 5
+    words = await db.scalar(
+        select(func.coalesce(func.sum(Chapter.word_count), 0)).where(Chapter.story_id == story.id)
+    ) or 0
+    daily = await text_stats.daily_stats(db, story.id, days=30)
     return {
         **StoryOut.model_validate(story).model_dump(mode="json"),
-        "stats": StoryStats(words=words, chapters=int(chapter_count), characters=int(character_count)).model_dump(),
+        "stats": StoryStats(
+            words=int(words),
+            chapters=int(chapter_count),
+            characters=int(character_count),
+            words_today=daily["words_today"],
+            streak_days=daily["streak_days"],
+            target_word_count=story.target_word_count,
+            daily_word_target=story.daily_word_target,
+            deadline=story.deadline,
+        ).model_dump(mode="json"),
     }
 
 
@@ -77,3 +98,74 @@ async def delete_story(story_id: str, user: CurrentUser, db: DB):
     await db.delete(story)
     await db.commit()
     return envelope_ok({"deleted": story_id})
+
+
+@router.get("/{story_id}/stats")
+async def story_stats(story_id: str, user: CurrentUser, db: DB, days: int = Query(30, ge=1, le=365)):
+    story = await get_user_story(story_id, user, db)
+    daily = await text_stats.daily_stats(db, story.id, days=days)
+    words = await db.scalar(
+        select(func.coalesce(func.sum(Chapter.word_count), 0)).where(Chapter.story_id == story.id)
+    ) or 0
+    return envelope_ok({
+        "words": int(words),
+        "target_word_count": story.target_word_count,
+        "daily_word_target": story.daily_word_target,
+        "deadline": story.deadline.isoformat() if story.deadline else None,
+        **daily,
+    })
+
+
+@router.get("/{story_id}/search")
+async def search_story(
+    story_id: str,
+    user: CurrentUser,
+    db: DB,
+    q: str = Query(min_length=1, max_length=200),
+    limit: int = Query(30, ge=1, le=100),
+):
+    """Portable substring search across the manuscript and story bible."""
+    await get_user_story(story_id, user, db)
+    like = f"%{q}%"
+    hits: list[SearchHit] = []
+
+    chapters = (await db.execute(
+        select(Chapter)
+        .where(Chapter.story_id == story_id, or_(
+            Chapter.title.ilike(like), Chapter.content.ilike(like), Chapter.summary.ilike(like),
+        ))
+        .order_by(Chapter.number)
+        .limit(limit)
+    )).scalars().all()
+    for c in chapters:
+        idx = (c.content or "").lower().find(q.lower())
+        snippet = (c.content or "")[max(0, idx - 60): idx + 140] if idx >= 0 else (c.summary or "")
+        hits.append(SearchHit(
+            kind="chapter", id=c.id, title=f"Ch{c.number}. {c.title or 'Untitled'}",
+            snippet=snippet.strip(), meta={"number": c.number},
+        ))
+
+    async def _named(model, kind: str, title_field: str, body_field: str):
+        rows = (await db.execute(
+            select(model)
+            .where(model.story_id == story_id, or_(
+                getattr(model, title_field).ilike(like), getattr(model, body_field).ilike(like),
+            ))
+            .limit(limit)
+        )).scalars().all()
+        for row in rows:
+            hits.append(SearchHit(
+                kind=kind, id=row.id,
+                title=getattr(row, title_field) or kind.title(),
+                snippet=(getattr(row, body_field) or "")[:180],
+                meta={},
+            ))
+
+    await _named(Character, "character", "name", "personality")
+    await _named(Location, "location", "name", "description")
+    await _named(Faction, "faction", "name", "description")
+    await _named(PlotThread, "thread", "name", "description")
+    await _named(SceneCard, "scene", "title", "summary")
+    await _named(StoryNote, "note", "title", "body")
+
+    return envelope_ok(SearchResponse(query=q, hits=hits[:limit]).model_dump())

@@ -1,7 +1,7 @@
 "use client";
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ShieldCheck, AlertOctagon, AlertTriangle, Info } from "lucide-react";
 import * as api from "@/lib/api";
 import { Btn, Card, FG, PageHdr, Sel, Tag } from "@/components/ui/Primitives";
@@ -41,6 +41,10 @@ const copyEn = {
   findings: "Findings",
   working: "What's working",
   arrow: "→",
+  history: "Past checks",
+  noHistory: "No saved checks yet.",
+  view: "View",
+  close: "Close",
 };
 
 type Copy = typeof copyEn;
@@ -75,6 +79,10 @@ const COPY: Record<Locale, Copy> = {
     findings: "الملاحظات",
     working: "نقاط القوة",
     arrow: "←",
+    history: "عمليات التدقيق السابقة",
+    noHistory: "لا توجد عمليات تدقيق محفوظة بعد.",
+    view: "عرض",
+    close: "إغلاق",
   },
 };
 
@@ -83,6 +91,7 @@ export default function CheckPage() {
   const { locale, t, formatNumber } = useI18n();
   const c = COPY[locale];
   const { data: chapters } = useQuery({ queryKey: ["chapters", storyId], queryFn: () => api.listChapters(storyId) });
+  const qc = useQueryClient();
   const { aiAvailable } = useEntitlement();
   const [chapterId, setChapterId] = useState("");
   const [passType, setPassType] = useState("logic");
@@ -90,7 +99,11 @@ export default function CheckPage() {
   const run = useMutation({
     mutationKey: ["llm", "story-check", passType],
     mutationFn: () => api.storyCheck(storyId, chapterId, passType),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["check-reports", storyId] }),
   });
+
+  const reportsQ = useQuery({ queryKey: ["check-reports", storyId], queryFn: () => api.listCheckReports(storyId) });
+  const [viewed, setViewed] = useState<any>(null);
 
   const passLabel = (key: string) => c.passes[key] ?? key;
 
@@ -118,6 +131,54 @@ export default function CheckPage() {
           </Btn>
         </div>
       </Card>
+
+      {(reportsQ.data || []).length > 0 && (
+        <Card className="mb-4">
+          <h3 className="font-display text-lg mb-2">{c.history}</h3>
+          <ul className="space-y-1">
+            {(reportsQ.data || []).map((r: any) => (
+              <li key={r.id} className="flex items-center justify-between gap-2 text-sm py-1.5 px-2 rounded hover:bg-ink-surface2">
+                <span>
+                  <span className="text-ink-text3 me-2">{new Date(r.created_at).toLocaleString()}</span>
+                  <Tag color="red">{c.severityHigh} {formatNumber(r.severity_buckets?.high ?? 0)}</Tag>{" "}
+                  <Tag color="gold">{c.severityMedium} {formatNumber(r.severity_buckets?.medium ?? 0)}</Tag>{" "}
+                  <Tag color="muted">{c.severityLow} {formatNumber(r.severity_buckets?.low ?? 0)}</Tag>
+                </span>
+                <Btn variant="ghost" onClick={() => setViewed(r)}>{c.view}</Btn>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+      {reportsQ.isSuccess && (reportsQ.data || []).length === 0 && (
+        <p className="text-sm text-ink-text3 mb-4">{c.noHistory}</p>
+      )}
+
+      {viewed && (
+        <Card className="mb-4">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="font-display text-lg">{c.findings}</h3>
+            <Btn variant="ghost" onClick={() => setViewed(null)}>{c.close}</Btn>
+          </div>
+          <ul className="space-y-3">
+            {(viewed.findings || []).map((f: any, i: number) => (
+              <li key={i} className="border-s-2 ps-3" style={{ borderColor: f.severity === "high" ? "#b34535" : f.severity === "medium" ? "#c89830" : "#54473a" }}>
+                <div className="flex items-center gap-2 mb-1">
+                  <strong>{f.title}</strong>
+                  <Tag color={f.severity === "high" ? "red" : f.severity === "medium" ? "gold" : "muted"}>{c.severityLabels[f.severity] ?? f.severity}</Tag>
+                </div>
+                <p className="text-sm text-ink-text2">{f.detail}</p>
+                {f.suggestion && <p className="text-xs text-ink-goldLight mt-1">{c.arrow} {f.suggestion}</p>}
+              </li>
+            ))}
+          </ul>
+          {(viewed.strengths || []).length > 0 && (
+            <ul className="mt-3 space-y-1 text-sm">
+              {viewed.strengths.map((s: string, i: number) => <li key={i}>✓ {s}</li>)}
+            </ul>
+          )}
+        </Card>
+      )}
 
       {run.isError && (
         <Card className="mb-4 border-ink-red/40">

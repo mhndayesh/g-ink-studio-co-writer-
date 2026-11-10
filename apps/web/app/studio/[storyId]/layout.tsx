@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useSearchParams, useRouter } from "next/navigation";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Wand2, FileText, Users, Globe, Network, ShieldCheck, Settings, ListTree, Layers, MapPin, ScrollText, Download, Calendar, Radar, ArrowLeftCircle, Cpu, AlertTriangle, Send, Inbox, BookOpen, Drama, Fingerprint, Ear, Sparkles, GitCompare, Menu, X } from "lucide-react";
+import { Wand2, FileText, Users, Globe, Network, ShieldCheck, Settings, ListTree, Layers, MapPin, ScrollText, Download, Calendar, Radar, ArrowLeftCircle, Cpu, AlertTriangle, Send, Inbox, BookOpen, Drama, Fingerprint, Ear, Sparkles, GitCompare, Menu, X, Search, NotebookPen } from "lucide-react";
 import * as api from "@/lib/api";
 import { useRequireAuth, useAuthReady } from "@/lib/auth";
 import { useUI, ViewMode } from "@/lib/store";
@@ -35,6 +35,8 @@ const COPY = {
       world: "Your World",
       map: "Story Map",
       check: "Story Check",
+      notes: "Notes",
+      search: "Search",
     },
     voiceStudio: "Character Voice Studio",
     voiceStages: { build: "Build", write: "Write" },
@@ -69,6 +71,8 @@ const COPY = {
       check: "Story Check",
       timeline: "Timeline",
       radar: "Continuity Radar",
+      notes: "Notes",
+      search: "Search",
     },
     browseStories: "Browse stories",
     readerInbox: "Reader inbox",
@@ -85,6 +89,8 @@ const COPY = {
       world: "عالمك",
       map: "خريطة القصة",
       check: "فحص القصة",
+      notes: "ملاحظات",
+      search: "بحث",
     },
     voiceStudio: "استوديو صوت الشخصية",
     voiceStages: { build: "البناء", write: "الكتابة" },
@@ -119,6 +125,8 @@ const COPY = {
       check: "فحص القصة",
       timeline: "الخط الزمني",
       radar: "رادار الاتساق",
+      notes: "ملاحظات",
+      search: "بحث",
     },
     browseStories: "تصفّح القصص",
     readerInbox: "صندوق وارد القرّاء",
@@ -135,6 +143,8 @@ const FLOW_TABS = [
   { href: "world", icon: Globe },
   { href: "map", icon: Network },
   { href: "check", icon: ShieldCheck },
+  { href: "notes", icon: NotebookPen },
+  { href: "search", icon: Search },
 ];
 
 // Voice Studio is its own view (third toggle). Its sidebar links route to the
@@ -178,6 +188,8 @@ const STUDIO_STAGES: Array<{ stage: string; pages: Array<{ href: string; icon: a
     { href: "check", icon: ShieldCheck },
     { href: "timeline", icon: Calendar },
     { href: "radar", icon: Radar },
+    { href: "notes", icon: NotebookPen },
+    { href: "search", icon: Search },
   ]},
 ];
 

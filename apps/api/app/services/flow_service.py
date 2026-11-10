@@ -1,4 +1,4 @@
-"""Flow Writing pipeline — port of story_forge.jsx FlowTab.
+"""Flow Writing pipeline: polish rough prose, extract entities, commit a chapter.
 
 Three calls:
   polish(raw, notes)   → polished prose
@@ -9,6 +9,8 @@ Three calls:
 from __future__ import annotations
 
 import logging
+import time
+import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import delete as sa_delete
@@ -16,6 +18,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.prompt_safety import fence, security_clause
+from app.core.errors import Conflict, NotFound
 from app.db.models import (
     Chapter,
     Character,
@@ -44,8 +47,42 @@ from app.services import llm_service
 from app.services.context_builder import build_story_context
 from app.services.prompts_ar import localized_prompt
 from app.services.story_language import get_story_language
+from app.services import text_stats
 
 log = logging.getLogger("gink.flow")
+
+# Short-lived cache so the polish → extract pair reuses one context build (each
+# build is ~14 SELECTs over unchanged data). Tokens are opaque, expire in 15
+# minutes, and the cache is bounded to avoid unbounded memory growth.
+_CTX_CACHE: dict[str, tuple[float, str, dict]] = {}
+_CTX_TTL = 900
+_CTX_MAX = 32
+
+
+def _cache_context(ctx: str, meta: dict) -> str:
+    now = time.time()
+    for token, (exp, _ctx, _meta) in list(_CTX_CACHE.items()):
+        if exp <= now:
+            _CTX_CACHE.pop(token, None)
+    if len(_CTX_CACHE) >= _CTX_MAX:
+        oldest = min(_CTX_CACHE.items(), key=lambda kv: kv[1][0])[0]
+        _CTX_CACHE.pop(oldest, None)
+    token = uuid.uuid4().hex
+    _CTX_CACHE[token] = (now + _CTX_TTL, ctx, meta)
+    return token
+
+
+def _cached_context(token: str | None) -> tuple[str, dict] | None:
+    if not token:
+        return None
+    entry = _CTX_CACHE.get(token)
+    if entry is None:
+        return None
+    exp, ctx, meta = entry
+    if exp <= time.time():
+        _CTX_CACHE.pop(token, None)
+        return None
+    return ctx, meta
 
 
 POLISH_SYSTEM = """You are a literary editor. The author writes freely with imagination but limited craft.
@@ -186,6 +223,7 @@ async def enhance(db: AsyncSession, user: User, story_id: str, raw: str) -> Flow
         system=localized_prompt("flow.enhance", lang, ENHANCE_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg="AUTHOR TEXT TO ENHANCE:\n" + fence("author_text", raw),
         json_mode=True, temperature=0.2, story_id=story_id,
+        language=lang,
         localize_output=False,  # enhance preserves the input's language by design
     )
     parsed = llm_service.parse_json(resp.text) or {}
@@ -252,11 +290,16 @@ async def polish(
 ) -> FlowPolishResponse:
     # Scene setup (optional): pin the in-scene cast's full identity + place identity
     # so the characters actually in this scene always get their complete voice.
+    # Entity ids are included so the SAME context can be handed to extract.
+    ctx_meta: dict = {}
     ctx = await build_story_context(
         db, story_id,
+        include_entity_ids=True,
         scene_character_ids=scene_character_ids,
         scene_location_id=scene_location_id,
+        meta=ctx_meta,
     )
+    context_token = _cache_context(ctx, ctx_meta)
     user_msg = (
         "STORY CONTEXT (reference only):\n"
         f"{fence('story_context', ctx)}\n\n"
@@ -271,13 +314,24 @@ async def polish(
         system=localized_prompt("flow.polish", lang, POLISH_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg,
         temperature=0.7, max_tokens=64000, story_id=story_id,
+        language=lang,
     )
-    return FlowPolishResponse(polished=resp.text.strip(), fallback=fb)
+    return FlowPolishResponse(polished=resp.text.strip(), fallback=fb, context_token=context_token)
 
 
-async def extract(db: AsyncSession, user: User, story_id: str, polished: str) -> FlowExtractResponse:
+async def extract(
+    db: AsyncSession,
+    user: User,
+    story_id: str,
+    polished: str,
+    context_token: str | None = None,
+) -> FlowExtractResponse:
     ctx_meta: dict = {}
-    ctx = await build_story_context(db, story_id, include_entity_ids=True, meta=ctx_meta)
+    cached = _cached_context(context_token)
+    if cached is not None:
+        ctx, ctx_meta = cached
+    else:
+        ctx = await build_story_context(db, story_id, include_entity_ids=True, meta=ctx_meta)
     user_msg = (
         "STORY CONTEXT (reference only):\n"
         f"{fence('story_context', ctx)}\n\n"
@@ -290,6 +344,7 @@ async def extract(db: AsyncSession, user: User, story_id: str, polished: str) ->
         system=localized_prompt("flow.extract", lang, EXTRACT_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg,
         json_mode=True, temperature=0.2, max_tokens=64000, story_id=story_id,
+        language=lang,
     )
     parsed = llm_service.parse_json(resp.text) or {}
     if not isinstance(parsed, dict):
@@ -529,6 +584,22 @@ async def approve(
     """
     from app.services import version_service
 
+    if payload.extracted.fallback and not payload.allow_fallback:
+        # Degraded extraction is only dangerous when it is empty/stub output —
+        # that would write placeholder text as a real chapter. If the payload
+        # still carries usable entities (a caller-supplied/manual extraction),
+        # filing it is intentional.
+        has_content = bool(
+            payload.extracted.title_suggestion
+            or payload.extracted.characters
+            or payload.extracted.events
+            or payload.extracted.scenes
+        )
+        if not has_content:
+            raise Conflict(
+                "This extraction came from the degraded fallback provider. Re-run it, or confirm to save anyway."
+            )
+
     # Lock the story row for the whole approve transaction. Two concurrent
     # approvals used to read the same max(chapter.number) and both insert the
     # next chapter — a silent duplicate. FOR UPDATE serializes them on Postgres
@@ -537,7 +608,7 @@ async def approve(
         await db.execute(select(Story).where(Story.id == story_id).with_for_update())
     ).scalar_one_or_none()
     if story is None:
-        raise ValueError("story not found")
+        raise NotFound("Story not found")
 
     # Decide the target chapter:
     #   target_chapter_id  → overwrite that existing chapter
@@ -547,13 +618,13 @@ async def approve(
     if payload.target_chapter_id:
         overwrite_chapter = await db.get(Chapter, payload.target_chapter_id)
         if overwrite_chapter is None or overwrite_chapter.story_id != story_id:
-            raise ValueError("target_chapter_id not found in this story")
+            raise NotFound("target_chapter_id not found in this story")
         next_num = overwrite_chapter.number
     elif payload.target_chapter_number and payload.target_chapter_number > 0:
         # Reject if a chapter already lives at that number
         clash = await db.scalar(select(Chapter.id).where(Chapter.story_id == story_id, Chapter.number == payload.target_chapter_number))
         if clash:
-            raise ValueError(f"chapter {payload.target_chapter_number} already exists — pass target_chapter_id to overwrite")
+            raise Conflict(f"Chapter {payload.target_chapter_number} already exists — pass target_chapter_id to overwrite")
         next_num = payload.target_chapter_number
     else:
         max_num = await db.scalar(select(func.coalesce(func.max(Chapter.number), 0)).where(Chapter.story_id == story_id)) or 0
@@ -770,15 +841,25 @@ async def approve(
 
     new_title = payload.chapter_title or payload.extracted.title_suggestion or f"Chapter {next_num}"
     new_summary = payload.chapter_summary or payload.extracted.summary
+    new_words = text_stats.count_words(payload.polished)
     if overwrite_chapter is not None:
         # Redo: overwrite in place — keeps the chapter id stable so existing
-        # links (events, threads, graph nodes) don't break.
+        # links (events, threads, graph nodes) don't break. Snapshot the old
+        # prose FIRST so a bad overwrite is always recoverable.
+        from app.services import revision_service
+
+        await revision_service.capture(
+            db, overwrite_chapter, source="flow", note=f"before flow overwrite ch{next_num}"
+        )
+        delta = new_words - (overwrite_chapter.word_count or text_stats.count_words(overwrite_chapter.content))
         overwrite_chapter.title = new_title
         overwrite_chapter.content = payload.polished
         overwrite_chapter.summary = new_summary
+        overwrite_chapter.word_count = new_words
         overwrite_chapter.pov_character_id = pov_id
         overwrite_chapter.location_id = chapter_location_id
         overwrite_chapter.character_ids = referenced_ids
+        await text_stats.record_delta(db, story_id, delta)
         # Clear stale events that were extracted for the previous content
         await db.execute(sa_delete(Event).where(Event.chapter_id == overwrite_chapter.id))
         await db.execute(sa_delete(PlotThreadSceneLink).where(PlotThreadSceneLink.chapter_id == overwrite_chapter.id))
@@ -792,12 +873,14 @@ async def approve(
             title=new_title,
             content=payload.polished,
             summary=new_summary,
+            word_count=new_words,
             pov_character_id=pov_id,
             location_id=chapter_location_id,
             character_ids=referenced_ids,
             seeds=[],
         )
         db.add(chapter)
+        await text_stats.record_delta(db, story_id, new_words)
     await db.flush()
 
     # 6. Add extracted events, linked to the new chapter
@@ -866,7 +949,16 @@ async def approve(
     scene_ids: list[str] = []
     revelation_ids: list[str] = []
     thread_scene_link_ids: list[str] = []
-    scenes = payload.extracted.scenes or [_scene_fallback(payload)]
+    has_any_extraction = bool(
+        payload.extracted.characters
+        or payload.extracted.title_suggestion
+        or payload.extracted.summary
+        or payload.extracted.pov_suggestion
+        or payload.extracted.location_suggestion
+        or payload.extracted.events
+        or payload.extracted.threads
+    )
+    scenes = payload.extracted.scenes or ([_scene_fallback(payload)] if has_any_extraction else [])
 
     # 9a. Resolve every scene location up front, then flush once.
     new_scene_locs: list[Location] = []
@@ -999,59 +1091,48 @@ async def approve(
     for d in open_drafts:
         d.approved_at = now
 
-    # Snapshot the story state
-    version = await version_service.snapshot(db, story_id, note=f"flow approve ch{next_num}")
-
-    story.updated_at = datetime.now(timezone.utc)
+    # The story row was locked for this transaction; mark the graph stale BEFORE
+    # committing so a crash between commit and the background job is visible to
+    # the reconciler (it retries anything != "ok").
+    story.updated_at = now
+    story.graph_status = "pending"
     await db.commit()
     await db.refresh(chapter)
 
-    # 10. Refresh deterministic voice fingerprints AFTER the chapter transaction
-    # commits. The rebuild walks every chapter's prose; doing it inside the write
-    # transaction held row locks for the whole scan. It runs on its own session so
-    # a failure can never poison the committed approve.
+    # Snapshot on its own session, AFTER the write transaction released row locks.
+    # (It used to run inside the FOR UPDATE transaction, holding the story row
+    # across a whole-manuscript serialization.) The number is returned to the
+    # client, so this one pass stays synchronous; everything else is queued.
+    version_no = 0
     try:
+        from sqlalchemy.exc import IntegrityError
+
         from app.db.session import SessionLocal
-        from app.services import voice_service
 
-        async with SessionLocal() as vdb:
-            await voice_service.rebuild_profiles(vdb, story_id)
-            await vdb.commit()
+        # Retry on a concurrent approve that inserted the same version number
+        # between our commit and this snapshot (the write transaction no longer
+        # holds the story lock while the whole-manuscript snapshot runs).
+        for attempt in range(3):
+            try:
+                async with SessionLocal() as vdb:
+                    version = await version_service.snapshot(vdb, story_id, note=f"flow approve ch{next_num}")
+                    await vdb.commit()
+                    version_no = version.version_no
+                break
+            except IntegrityError:
+                if attempt == 2:
+                    raise
+                continue
     except Exception as e:
-        log.debug("voice profile rebuild failed: %s", e)
+        log.warning("story snapshot failed after approve: %s", e)
 
-    # Graph reprojection (best-effort) runs AFTER the chapter commit.
-    #   * Redis configured -> queue the ARQ task; approve returns immediately.
-    #   * No Redis         -> run inline (original behavior) on this session and
-    #     commit the graph_status / graph_synced_at write.
-    # On any failure graph_status is left != "ok", so the worker's reconcile cron
-    # retries it later. We deliberately do NOT rollback in the except path: with
-    # expire_on_commit=False the committed `chapter` stays readable, and a
-    # rollback would force-expire it (breaking the caller's chapter.id read).
+    # Voice fingerprints, vector index, and Neo4j projection all run off-request
+    # (ARQ when Redis is configured, a detached task otherwise).
     try:
-        from app.core.config import get_settings
+        from app.services import post_approve
 
-        if get_settings().redis_url:
-            # Hand the Neo4j projection to the ARQ worker so approve returns
-            # without waiting on graph I/O. The worker's reconcile cron also
-            # retries any story left non-ok.
-            from app.workers.pool import get_pool
-
-            pool = await get_pool()
-            await pool.enqueue_job("reproject_story_task", story_id)
-        else:
-            from app.services import graph_service
-
-            await graph_service.reproject_story(db, story_id)
-            await db.commit()
+        await post_approve.schedule(story_id, chapter.id)
     except Exception as e:
-        log.warning("graph reprojection enqueue failed (%s); running inline", e)
-        try:
-            from app.services import graph_service
+        log.warning("post-approve scheduling failed: %s", e)
 
-            await graph_service.reproject_story(db, story_id)
-            await db.commit()
-        except Exception as inline_err:
-            log.warning("graph reprojection failed: %s", inline_err)
-
-    return chapter, new_char_ids, added_themes, version.version_no, scene_ids, revelation_ids, thread_scene_link_ids
+    return chapter, new_char_ids, added_themes, version_no, scene_ids, revelation_ids, thread_scene_link_ids
