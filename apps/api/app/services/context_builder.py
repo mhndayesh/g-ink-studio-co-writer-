@@ -1,7 +1,7 @@
 """Build the structured story context the LLM sees on every call.
 
-Mirror of Story_Forge_Docs.md §5.2: `buildCtx(world, chars, chaps)` —
-extended to include locations, factions, themes, and (optionally) a
+Builds `buildCtx(world, chars, chaps)` and extends it to include
+locations, factions, themes, and (optionally) a
 Graph-RAG slice built from Qdrant + Neo4j (see rag_service).
 
 ## Size budget (why this file is shaped the way it is)

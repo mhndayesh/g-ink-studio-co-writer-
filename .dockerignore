@@ -28,5 +28,4 @@ _private
 caddy
 infra
 *.md
-story_forge.jsx
 docker-compose*.yml

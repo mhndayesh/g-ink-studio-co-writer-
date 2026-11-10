@@ -2,7 +2,7 @@
 
 Your AI co-writer. Write freely; it polishes the prose, files every character, place, faction, theme, plot thread, scene, and revelation automatically — and watches every continuity thread so you never lose the story.
 
-Built as a full-stack implementation of the Story Forge product vision (`Story_Forge_Docs.md`); the original single-file React prototype (`story_forge.jsx`) is kept for reference only.
+Built as a full-stack implementation of the Story Forge product vision.
 
 ## What it does
 
@@ -167,8 +167,6 @@ apps/
   web/          Next.js frontend
     app/studio/[storyId]/voice/   Character Voice Studio (Voice view)
 docker-compose.yml
-Story_Forge_Docs.md   ← product vision (historical reference)
-story_forge.jsx       ← single-file prototype (reference only)
 ```
 
 See [RUN.md](RUN.md) for run options and auth setup, [DEPLOY.md](DEPLOY.md) for a VPS / Docker-Compose deploy, and [CONTRIBUTING.md](CONTRIBUTING.md) to get set up for development.

@@ -8,13 +8,13 @@ Thanks for being interested in G-Ink Novel Studio.
 
 ## Architecture orientation
 
-Start with the [README](README.md) (feature tour, stack, "what the AI sees") and [RUN.md](RUN.md) (how to run it + auth setup). Then read [Story_Forge_Docs.md](Story_Forge_Docs.md) for the product intent. The high-value invariants — the `{ok, data, error}` response envelope, routing every AI call through `llm_service.run(...)`, prompt fencing — are summarized in the checklist below.
+Start with the [README](README.md) (feature tour, stack, "what the AI sees") and [RUN.md](RUN.md) (how to run it + auth setup). The high-value invariants — the `{ok, data, error}` response envelope, routing every AI call through `llm_service.run(...)`, prompt fencing — are summarized in the checklist below.
 
 ## Before opening a PR
 
 - `cd apps/api && .venv/bin/pytest -v` — all tests pass (~99 currently).
 - `cd apps/web && npm run lint && npm run build` — frontend compiles.
-- If you touched the DB schema, generate a migration: `.venv/bin/alembic revision --autogenerate -m "what changed"`. Current head: **0018**. (`test_migration_drift.py` will fail if a model has no matching migration.)
+- If you touched the DB schema, generate a migration: `.venv/bin/alembic revision --autogenerate -m "what changed"`. Current head: **0023**. (`test_migration_drift.py` will fail if a model has no matching migration.)
 - If you added a new AI call, route it through `llm_service.run(...)` and tag the front-end mutation with `mutationKey: ["llm", "<name>"]` so the BusyOverlay picks it up.
 - If your call injects author-controlled text into a prompt, wrap it with `fence(tag, content)` from `app.core.prompt_safety` and append `SECURITY_CLAUSE` to the system prompt.
 - If you're resolving a character name to an id (approve flow or similar), use `name_to_any_id` (which excludes ambiguous names) rather than `existing_by_name` directly.
