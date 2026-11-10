@@ -3,17 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { applyMode, getStoredMode, setStoredMode, type Mode, type Direction } from "@/lib/theme";
 import { useMediaQuery } from "@/lib/useMediaQuery";
-
-const DIRECTIONS: { value: Direction; label: string }[] = [
-  { value: "ember", label: "Sienna" },
-  { value: "grove", label: "Sage"   },
-];
-
-const MODES: { value: Mode; label: string }[] = [
-  { value: "dark",  label: "Dark"  },
-  { value: "soft",  label: "Soft"  },
-  { value: "light", label: "Light" },
-];
+import { useI18n } from "@/lib/i18n";
 
 function getStoredDir(): Direction {
   if (typeof window === "undefined") return "ember";
@@ -31,8 +21,18 @@ export default function ThemeSwitcher() {
   const [mode,   setMode]   = useState<Mode>("soft");
   const [dir,    setDir]    = useState<Direction>("ember");
   const ref = useRef<HTMLDivElement>(null);
+  const { t } = useI18n();
   // On phones, collapse the trigger to just the ink-drop swatch to save bar width.
   const compact = useMediaQuery("(max-width: 560px)");
+  const DIRECTIONS: { value: Direction; label: string }[] = [
+    { value: "ember", label: t("theme.sienna") },
+    { value: "grove", label: t("theme.sage") },
+  ];
+  const MODES: { value: Mode; label: string }[] = [
+    { value: "dark", label: t("theme.dark") },
+    { value: "soft", label: t("theme.soft") },
+    { value: "light", label: t("theme.light") },
+  ];
 
   useEffect(() => {
     const m = getStoredMode() ?? "soft";
@@ -64,8 +64,8 @@ export default function ThemeSwitcher() {
   }
 
   // Dot indicator showing current active combination
-  const modeLabel = MODES.find(m => m.value === mode)?.label ?? "Soft";
-  const dirLabel  = DIRECTIONS.find(d => d.value === dir)?.label ?? "Sienna";
+  const modeLabel = MODES.find(m => m.value === mode)?.label ?? t("theme.soft");
+  const dirLabel  = DIRECTIONS.find(d => d.value === dir)?.label ?? t("theme.sienna");
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
@@ -123,7 +123,7 @@ export default function ThemeSwitcher() {
           style={{
             position: "absolute",
             top: "calc(100% + 8px)",
-            right: 0,
+            insetInlineEnd: 0,
             width: 260,
             background: "var(--surface)",
             border: "1px solid var(--border-strong)",
@@ -147,7 +147,7 @@ export default function ThemeSwitcher() {
                 marginBottom: 8,
               }}
             >
-              Direction
+              {t("theme.direction")}
             </p>
             <Seg
               options={DIRECTIONS}
@@ -169,7 +169,7 @@ export default function ThemeSwitcher() {
                 marginBottom: 8,
               }}
             >
-              Mode
+              {t("theme.mode")}
             </p>
             <Seg
               options={MODES}

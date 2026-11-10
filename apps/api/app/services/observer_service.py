@@ -23,7 +23,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound
-from app.core.prompt_safety import SECURITY_CLAUSE, fence
+from app.core.prompt_safety import fence, security_clause
 from app.db.models import (
     Character,
     CharacterState,
@@ -34,6 +34,8 @@ from app.db.models import (
 )
 from app.services import identity_service, llm_service
 from app.services.context_builder import build_story_context
+from app.services.prompts_ar import localized_prompt
+from app.services.story_language import get_story_language
 from app.services.identity_questions import PLACE_FIELD_MAP
 
 _STRICTNESS_GUIDANCE = {
@@ -107,8 +109,10 @@ async def build_place(db: AsyncSession, user: User, story_id: str, location_id: 
     loc = await _require_location(db, story_id, location_id)
     answer_lines = "\n".join(f"- {k}: {v}" for k, v in (answers or {}).items() if v)
     user_msg = f"PLACE: {loc.name}\n\nANSWERS:\n{fence('author_text', answer_lines)}"
+    lang = await get_story_language(db, story_id)
     resp, _fb = await llm_service.run(
-        db, user, page="voice.place", system=PLACE_SYNTH_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="voice.place",
+        system=localized_prompt("voice.place", lang, PLACE_SYNTH_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg, json_mode=True, temperature=0.4, max_tokens=32000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text)
@@ -184,8 +188,10 @@ async def observe(
         "DRAFT TO CRITIQUE:\n"
         f"{fence('author_draft', draft)}"
     )
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="voice.observe", system=OBSERVER_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="voice.observe",
+        system=localized_prompt("voice.observe", lang, OBSERVER_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg, json_mode=True, temperature=0.3, max_tokens=32000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text) or {}
@@ -287,8 +293,10 @@ async def rewrite(db: AsyncSession, user: User, story_id: str, payload: dict) ->
         parts.append("AUTHOR INSTRUCTION:\n" + fence("author_instruction", instruction))
     if draft:
         parts.append("DRAFT TO REWRITE:\n" + fence("author_draft", draft))
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="voice.rewrite", system=REWRITE_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="voice.rewrite",
+        system=localized_prompt("voice.rewrite", lang, REWRITE_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg="\n\n".join(parts), temperature=0.7, max_tokens=8000, story_id=story_id,
     )
     return {"rewritten": resp.text.strip(), "fallback": fb}
@@ -337,8 +345,10 @@ async def evolve_suggestions(db: AsyncSession, user: User, story_id: str, text: 
         "JUST-APPROVED SCENE:\n"
         f"{fence('author_text', text)}"
     )
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="voice.evolve", system=EVOLVE_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="voice.evolve",
+        system=localized_prompt("voice.evolve", lang, EVOLVE_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg, json_mode=True, temperature=0.3, max_tokens=64000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text) or {}
@@ -426,8 +436,10 @@ async def compare_voices(db: AsyncSession, user: User, story_id: str, character_
         "SITUATION:\n"
         f"{fence('author_text', situation)}"
     )
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="voice.compare", system=COMPARE_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="voice.compare",
+        system=localized_prompt("voice.compare", lang, COMPARE_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg, json_mode=True, temperature=0.8, max_tokens=64000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text) or {}

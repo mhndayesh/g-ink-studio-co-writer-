@@ -6,6 +6,7 @@ import * as api from "@/lib/api";
 import { Btn, Card, FG, Inp, Tag } from "@/components/ui/Primitives";
 import { ProviderForm, ProviderValue, emptyProvider, type Provider } from "@/components/settings/ProviderForm";
 import { ActAsControl } from "@/components/billing/ActAsControl";
+import { useI18n, type Locale } from "@/lib/i18n";
 
 type Caps = api.SiteConfigCaps;
 const EMPTY_CAPS: Caps = {
@@ -35,10 +36,51 @@ function numOrNull(s: string): number | null {
   return Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
 }
 
+const copyEn = {
+  title: "Owner controls",
+  ownerOnly: "owner only",
+  subtitle: "Set the default AI your paid & free users run on, tune their limits, and view the app as any user type.",
+  defaultAi: "Default AI (what paid & free users get)",
+  usageLimits: "Usage limits (paid & free)",
+  usageHint: "Leave blank to use the built-in default. BYOK and owner are never capped.",
+  capPaidActions: "Paid — actions / month",
+  capPaidTokens: "Paid — tokens / month",
+  capFreeActions: "Free trial — actions",
+  capFreeTokens: "Free trial — tokens",
+  defaultValue: (value: string) => `default ${value}`,
+  defaultPlain: "default",
+  saved: "Saved.",
+  save: "Save owner settings",
+};
+
+type Copy = typeof copyEn;
+
+const COPY: Record<Locale, Copy> = {
+  en: copyEn,
+  ar: {
+    title: "أدوات المالك",
+    ownerOnly: "للمالك فقط",
+    subtitle: "حدّد الذكاء الاصطناعي الافتراضي لمستخدمي الخطط المدفوعة والمجانية، واضبط حدودهم، واستعرض التطبيق بأي نوع مستخدم.",
+    defaultAi: "الذكاء الاصطناعي الافتراضي (للمستخدمين المدفوعين والمجانيين)",
+    usageLimits: "حدود الاستخدام (المدفوع والمجاني)",
+    usageHint: "اتركه فارغًا لاستخدام الافتراضي المدمج. خطة المفتاح الخاص والمالك بلا حدود دائمًا.",
+    capPaidActions: "المدفوع — الإجراءات / شهر",
+    capPaidTokens: "المدفوع — الرموز / شهر",
+    capFreeActions: "التجربة المجانية — الإجراءات",
+    capFreeTokens: "التجربة المجانية — الرموز",
+    defaultValue: (value: string) => `الافتراضي ${value}`,
+    defaultPlain: "الافتراضي",
+    saved: "تم الحفظ.",
+    save: "حفظ إعدادات المالك",
+  },
+};
+
 /** Owner-only control surface: shape-shift + the default AI every paid/free user
  *  runs on + the tunable usage caps. Renders nothing for non-owners. */
 export function OwnerPanel() {
   const qc = useQueryClient();
+  const { locale, t, formatNumber } = useI18n();
+  const c = COPY[locale];
   const { data: sc } = useQuery({ queryKey: ["site-config"], queryFn: api.adminGetSiteConfig });
 
   const [house, setHouse] = useState<ProviderValue>(emptyProvider());
@@ -75,7 +117,7 @@ export function OwnerPanel() {
         type="number"
         min={0}
         value={caps[key] ?? ""}
-        placeholder={placeholder != null ? `default ${placeholder.toLocaleString()}` : "default"}
+        placeholder={placeholder != null ? c.defaultValue(formatNumber(placeholder)) : c.defaultPlain}
         onChange={(e) => setCaps({ ...caps, [key]: numOrNull(e.target.value) })}
       />
     </FG>
@@ -85,11 +127,11 @@ export function OwnerPanel() {
     <Card className="mb-4 border-ink-gold/40">
       <div className="flex items-center gap-2 mb-1">
         <Crown size={16} className="text-ink-gold" />
-        <h3 className="font-display text-lg">Owner controls</h3>
-        <Tag color="gold">owner only</Tag>
+        <h3 className="font-display text-lg">{c.title}</h3>
+        <Tag color="gold">{c.ownerOnly}</Tag>
       </div>
       <p className="text-sm text-ink-text2 mb-4">
-        Set the default AI your paid &amp; free users run on, tune their limits, and view the app as any user type.
+        {c.subtitle}
       </p>
 
       {/* Shape-shift */}
@@ -101,7 +143,7 @@ export function OwnerPanel() {
       <div className="mb-5">
         <div className="flex items-center gap-2 mb-2">
           <Cpu size={14} className="text-ink-gold" />
-          <h4 className="font-medium">Default AI (what paid &amp; free users get)</h4>
+          <h4 className="font-medium">{c.defaultAi}</h4>
         </div>
         <ProviderForm value={house} onChange={setHouse} lane="creative" showEmbed />
       </div>
@@ -110,21 +152,21 @@ export function OwnerPanel() {
       <div className="mb-4">
         <div className="flex items-center gap-2 mb-2">
           <Gauge size={14} className="text-ink-gold" />
-          <h4 className="font-medium">Usage limits (paid &amp; free)</h4>
+          <h4 className="font-medium">{c.usageLimits}</h4>
         </div>
-        <p className="text-xs text-ink-text3 mb-2">Leave blank to use the built-in default. BYOK and owner are never capped.</p>
+        <p className="text-xs text-ink-text3 mb-2">{c.usageHint}</p>
         <div className="grid gap-3 md:grid-cols-2">
-          {capRow("Paid — actions / month", "dev_ai_max_actions", def?.dev_ai_max_actions)}
-          {capRow("Paid — tokens / month", "dev_ai_max_tokens", def?.dev_ai_max_tokens)}
-          {capRow("Free trial — actions", "free_trial_max_actions", def?.free_trial_max_actions)}
-          {capRow("Free trial — tokens", "free_trial_max_tokens", def?.free_trial_max_tokens)}
+          {capRow(c.capPaidActions, "dev_ai_max_actions", def?.dev_ai_max_actions)}
+          {capRow(c.capPaidTokens, "dev_ai_max_tokens", def?.dev_ai_max_tokens)}
+          {capRow(c.capFreeActions, "free_trial_max_actions", def?.free_trial_max_actions)}
+          {capRow(c.capFreeTokens, "free_trial_max_tokens", def?.free_trial_max_tokens)}
         </div>
       </div>
 
       <div className="flex items-center justify-end gap-2">
-        {save.isSuccess && <span className="text-xs text-ink-green">Saved.</span>}
+        {save.isSuccess && <span className="text-xs text-ink-green">{c.saved}</span>}
         <Btn variant="primary" onClick={() => save.mutate()} disabled={save.isPending}>
-          {save.isPending ? "Saving…" : "Save owner settings"}
+          {save.isPending ? t("common.saving") : c.save}
         </Btn>
       </div>
     </Card>

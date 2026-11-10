@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from app.core.deps import CurrentUser, DB, OptionalUser
 from app.core.errors import envelope_ok, NotFound
+from app.core.i18n import Locale
 from app.db.models import User, Story
 from app.db.publishing_models import (
     Publication, PublicationChapter, StoryRating, ReaderProfile,
@@ -29,6 +30,7 @@ router = APIRouter()
 
 class ProfileUpdate(BaseModel):
     display_name: Optional[str] = Field(None, max_length=120)
+    locale:       Optional[Locale] = None
     bio:          Optional[str] = Field(None, max_length=500)
     avatar_url:   Optional[str] = None
     profile_public: Optional[bool] = None
@@ -119,7 +121,7 @@ async def _profile_payload(user: User, db: AsyncSession) -> dict:
         "user_id":       user.id,
         # Never derive a public display name from the email local-part — that
         # leaks the address. Fall back to a neutral placeholder.
-        "display_name":  user.display_name or "Anonymous",
+        "display_name":  user.display_name or ("مجهول" if user.locale == "ar" else "Anonymous"),
         "bio":           rp.bio if rp else None,
         "avatar_url":    rp.avatar_url if rp else None,
         "profile_public": profile_public,
@@ -145,6 +147,8 @@ async def update_my_profile(payload: ProfileUpdate, user: CurrentUser, db: DB):
 
     if payload.display_name is not None:
         user.display_name = payload.display_name
+    if payload.locale is not None:
+        user.locale = payload.locale
     if payload.bio is not None:
         rp.bio = payload.bio
     if payload.avatar_url is not None:

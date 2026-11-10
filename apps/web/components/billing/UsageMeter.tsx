@@ -2,22 +2,51 @@
 import { KeyRound, Sparkles, Gift, Crown } from "lucide-react";
 import { useEntitlement } from "@/lib/useEntitlement";
 import { useUI } from "@/lib/store";
+import { useI18n } from "@/lib/i18n";
 
-const TIER_LABEL: Record<string, string> = {
-  free: "Free trial",
-  dev_ai: "Plus",
-  byok: "Your own keys",
-  owner: "Owner",
-};
+const COPY = {
+  en: {
+    tierLabel: {
+      free: "Free trial",
+      dev_ai: "Plus",
+      byok: "Your own keys",
+      owner: "Owner",
+    } as Record<string, string>,
+    upgrade: "Upgrade",
+    manage: "Manage",
+    actions: (used: string, cap: string, period: string) => `${used}/${cap} AI actions ${period}`,
+    thisMonth: "this month",
+    trial: "(trial)",
+    unlimitedProvider: "Unlimited · billed by your provider",
+    unlimitedOwner: "Unlimited · owner account",
+  },
+  ar: {
+    tierLabel: {
+      free: "تجربة مجانية",
+      dev_ai: "بلس",
+      byok: "مفاتيحك الخاصة",
+      owner: "المالك",
+    } as Record<string, string>,
+    upgrade: "ترقية",
+    manage: "إدارة",
+    actions: (used: string, cap: string, period: string) => `${used}/${cap} إجراء ذكاء اصطناعي ${period}`,
+    thisMonth: "هذا الشهر",
+    trial: "(تجريبي)",
+    unlimitedProvider: "بلا حدود · تُحتسب لدى مزوّدك",
+    unlimitedOwner: "بلا حدود · حساب المالك",
+  },
+} as const;
 
 /** Compact subscription + usage readout for the studio sidebar. */
 export function UsageMeter() {
+  const { locale, formatNumber } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
   const { entitlement: e } = useEntitlement();
   const openUpgrade = useUI((s) => s.openUpgrade);
   if (!e) return null;
 
   const tier = e.effective_tier;
-  const label = TIER_LABEL[tier] ?? tier;
+  const label = c.tierLabel[tier] ?? tier;
   const Icon = tier === "owner" ? Crown : tier === "byok" ? KeyRound : tier === "free" ? Gift : Sparkles;
 
   const cap = e.limits.max_actions;
@@ -37,7 +66,7 @@ export function UsageMeter() {
             onClick={() => openUpgrade("manual")}
             className="text-[10px] uppercase tracking-wider text-ink-goldLight hover:underline"
           >
-            {tier === "free" ? "Upgrade" : "Manage"}
+            {tier === "free" ? c.upgrade : c.manage}
           </button>
         )}
       </div>
@@ -51,13 +80,17 @@ export function UsageMeter() {
             />
           </div>
           <div className="text-[10px] text-ink-text3 mt-0.5">
-            {used}/{cap} AI actions {e.period === "lifetime" ? "(trial)" : "this month"}
+            {c.actions(
+              formatNumber(used),
+              formatNumber(cap as number),
+              e.period === "lifetime" ? c.trial : c.thisMonth,
+            )}
           </div>
         </div>
       )}
 
-      {tier === "byok" && <div className="text-[10px] text-ink-text3 mt-0.5">Unlimited · billed by your provider</div>}
-      {tier === "owner" && <div className="text-[10px] text-ink-text3 mt-0.5">Unlimited · owner account</div>}
+      {tier === "byok" && <div className="text-[10px] text-ink-text3 mt-0.5">{c.unlimitedProvider}</div>}
+      {tier === "owner" && <div className="text-[10px] text-ink-text3 mt-0.5">{c.unlimitedOwner}</div>}
     </div>
   );
 }

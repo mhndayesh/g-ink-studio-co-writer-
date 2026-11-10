@@ -95,7 +95,10 @@ async function refreshAccessToken(): Promise<string | null> {
     try {
       const res = await fetch(`${BASE}/v1/auth/refresh`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(typeof document !== "undefined" ? { "Accept-Language": document.documentElement.lang || "en" } : {}),
+        },
         body: JSON.stringify({ refresh_token: refresh }),
       });
       const body = await res.json().catch(() => null);
@@ -135,6 +138,7 @@ export type AuthUser = {
   id: string;
   email: string;
   display_name: string;
+  locale?: "en" | "ar";
   is_admin: boolean;
   [k: string]: unknown;
 };
@@ -142,7 +146,10 @@ export type AuthUser = {
 async function postAuth(path: string, payload: Record<string, unknown>): Promise<AuthUser> {
   const res = await fetch(`${BASE}${path}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(typeof document !== "undefined" ? { "Accept-Language": document.documentElement.lang || "en" } : {}),
+    },
     body: JSON.stringify(payload),
   });
   const body = await res.json().catch(() => null);
@@ -158,8 +165,8 @@ export function login(email: string, password: string): Promise<AuthUser> {
   return postAuth("/v1/auth/login", { email, password });
 }
 
-export function signup(email: string, password: string, displayName?: string): Promise<AuthUser> {
-  return postAuth("/v1/auth/signup", { email, password, display_name: displayName || "" });
+export function signup(email: string, password: string, displayName?: string, locale?: "en" | "ar"): Promise<AuthUser> {
+  return postAuth("/v1/auth/signup", { email, password, display_name: displayName || "", locale });
 }
 
 /** Sign out: best-effort server-side revocation, then clear local tokens. */

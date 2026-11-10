@@ -7,6 +7,7 @@
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { request } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 interface RatingModalProps {
   pubId: string;
@@ -15,14 +16,61 @@ interface RatingModalProps {
 }
 
 const DIMENSIONS = [
-  { key: "score_story",      label: "Story",       hint: "Plot, structure, pacing" },
-  { key: "score_craft",      label: "Writing",     hint: "Prose quality, style, voice" },
-  { key: "score_characters", label: "Characters",  hint: "Depth, believability, growth" },
-  { key: "score_pacing",     label: "Pacing",      hint: "Flow and momentum" },
-  { key: "score_world",      label: "World",       hint: "Setting, atmosphere, detail" },
+  {
+    key: "score_story",
+    en: { label: "Story", hint: "Plot, structure, pacing" },
+    ar: { label: "القصة", hint: "الحبكة والبناء والإيقاع" },
+  },
+  {
+    key: "score_craft",
+    en: { label: "Writing", hint: "Prose quality, style, voice" },
+    ar: { label: "الكتابة", hint: "جودة النثر والأسلوب والصوت" },
+  },
+  {
+    key: "score_characters",
+    en: { label: "Characters", hint: "Depth, believability, growth" },
+    ar: { label: "الشخصيات", hint: "العمق والمصداقية والنمو" },
+  },
+  {
+    key: "score_pacing",
+    en: { label: "Pacing", hint: "Flow and momentum" },
+    ar: { label: "الإيقاع", hint: "الانسيابية والزخم" },
+  },
+  {
+    key: "score_world",
+    en: { label: "World", hint: "Setting, atmosphere, detail" },
+    ar: { label: "العالم", hint: "المكان والأجواء والتفاصيل" },
+  },
 ] as const;
 
 type DimKey = (typeof DIMENSIONS)[number]["key"];
+
+const COPY = {
+  en: {
+    title: "Rate this story",
+    saved: "Rating saved!",
+    thankYou: "Thank you for rating \"{title}\".",
+    done: "Done",
+    overall: "Overall rating",
+    dimensions: "Rate specific dimensions (optional)",
+    saveError: "Couldn't save your rating. Please try again.",
+    saving: "Saving…",
+    submit: "Submit rating",
+    starLabels: ["", "Didn't like it", "It was okay", "Liked it", "Really liked it", "Loved it!"],
+  },
+  ar: {
+    title: "قيّم هذه القصة",
+    saved: "تم حفظ تقييمك!",
+    thankYou: "شكرًا لتقييمك «{title}».",
+    done: "تم",
+    overall: "التقييم العام",
+    dimensions: "قيّم أبعادًا محددة (اختياري)",
+    saveError: "تعذّر حفظ تقييمك. حاول مرة أخرى.",
+    saving: "جارٍ الحفظ…",
+    submit: "إرسال التقييم",
+    starLabels: ["", "لم تعجبني", "كانت مقبولة", "أعجبتني", "أعجبتني كثيرًا", "أحببتها!"],
+  },
+} as const;
 
 function StarPicker({
   value,
@@ -59,10 +107,10 @@ function StarPicker({
   );
 }
 
-const STAR_LABELS = ["", "Didn't like it", "It was okay", "Liked it", "Really liked it", "Loved it!"];
-
 export default function RatingModal({ pubId, storyTitle, onClose }: RatingModalProps) {
   const qc = useQueryClient();
+  const { locale } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
   const [overall, setOverall]     = useState(0);
   const [dims, setDims]           = useState<Partial<Record<DimKey, number>>>({});
   const [showDims, setShowDims]   = useState(false);
@@ -92,7 +140,7 @@ export default function RatingModal({ pubId, storyTitle, onClose }: RatingModalP
     // ("read chapter 1 first"). Without surfacing it the button just stops
     // spinning and looks broken — show the reason instead.
     onError: (e: unknown) =>
-      setError(e instanceof Error ? e.message : "Couldn't save your rating. Please try again."),
+      setError(e instanceof Error ? e.message : c.saveError),
   });
 
   return (
@@ -104,7 +152,7 @@ export default function RatingModal({ pubId, storyTitle, onClose }: RatingModalP
       <div className="w-full max-w-sm bg-[#16140F] border border-white/10 rounded-2xl shadow-2xl overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
-          <h2 className="text-base font-semibold text-white">Rate this story</h2>
+          <h2 className="text-base font-semibold text-white">{c.title}</h2>
           <button
             onClick={onClose}
             className="text-gray-500 hover:text-white transition text-lg leading-none"
@@ -118,25 +166,25 @@ export default function RatingModal({ pubId, storyTitle, onClose }: RatingModalP
             /* Success state */
             <div className="text-center py-6 space-y-3">
               <div className="text-4xl">✨</div>
-              <p className="text-base font-medium text-white">Rating saved!</p>
+              <p className="text-base font-medium text-white">{c.saved}</p>
               <p className="text-sm text-gray-400">
-                Thank you for rating "{storyTitle}".
+                {c.thankYou.replace("{title}", storyTitle)}
               </p>
               <button
                 onClick={onClose}
                 className="mt-2 px-6 py-2 text-sm bg-amber-500 hover:bg-amber-400 text-black font-medium rounded-xl transition"
               >
-                Done
+                {c.done}
               </button>
             </div>
           ) : (
             <>
               {/* Overall */}
               <div className="space-y-3">
-                <p className="text-sm text-gray-400">Overall rating</p>
+                <p className="text-sm text-gray-400">{c.overall}</p>
                 <StarPicker value={overall} onChange={setOverall} size="large" />
                 {overall > 0 && (
-                  <p className="text-xs text-amber-400/80">{STAR_LABELS[overall]}</p>
+                  <p className="text-xs text-amber-400/80">{c.starLabels[overall]}</p>
                 )}
               </div>
 
@@ -146,24 +194,27 @@ export default function RatingModal({ pubId, storyTitle, onClose }: RatingModalP
                 className="text-xs text-gray-500 hover:text-gray-300 transition flex items-center gap-1.5"
               >
                 <span>{showDims ? "−" : "+"}</span>
-                Rate specific dimensions (optional)
+                {c.dimensions}
               </button>
 
               {/* Dimension ratings */}
               {showDims && (
                 <div className="space-y-3 pt-1">
-                  {DIMENSIONS.map(({ key, label, hint }) => (
-                    <div key={key} className="flex items-center justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="text-sm text-gray-300 leading-none">{label}</p>
-                        <p className="text-xs text-gray-600 mt-0.5">{hint}</p>
+                  {DIMENSIONS.map(({ key, en, ar }) => {
+                    const dim = locale === "ar" ? ar : en;
+                    return (
+                      <div key={key} className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="text-sm text-gray-300 leading-none">{dim.label}</p>
+                          <p className="text-xs text-gray-600 mt-0.5">{dim.hint}</p>
+                        </div>
+                        <StarPicker
+                          value={dims[key] ?? 0}
+                          onChange={v => setDim(key, v)}
+                        />
                       </div>
-                      <StarPicker
-                        value={dims[key] ?? 0}
-                        onChange={v => setDim(key, v)}
-                      />
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
 
@@ -184,7 +235,7 @@ export default function RatingModal({ pubId, storyTitle, onClose }: RatingModalP
                   color: overall > 0 ? "#000" : "rgba(255,255,255,0.3)",
                 }}
               >
-                {submit.isPending ? "Saving…" : "Submit rating"}
+                {submit.isPending ? c.saving : c.submit}
               </button>
             </>
           )}

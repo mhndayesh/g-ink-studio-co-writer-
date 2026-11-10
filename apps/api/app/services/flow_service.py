@@ -15,7 +15,7 @@ from sqlalchemy import delete as sa_delete
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.prompt_safety import SECURITY_CLAUSE, fence
+from app.core.prompt_safety import fence, security_clause
 from app.db.models import (
     Chapter,
     Character,
@@ -42,6 +42,8 @@ from app.db.schemas import (
 )
 from app.services import llm_service
 from app.services.context_builder import build_story_context
+from app.services.prompts_ar import localized_prompt
+from app.services.story_language import get_story_language
 
 log = logging.getLogger("gink.flow")
 
@@ -178,10 +180,13 @@ Return ONLY a single JSON object with these keys:
 
 async def enhance(db: AsyncSession, user: User, story_id: str, raw: str) -> FlowEnhanceResponse:
     """Language-enhance the author's own text without changing the story."""
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="flow.enhance", system=ENHANCE_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="flow.enhance",
+        system=localized_prompt("flow.enhance", lang, ENHANCE_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg="AUTHOR TEXT TO ENHANCE:\n" + fence("author_text", raw),
         json_mode=True, temperature=0.2, story_id=story_id,
+        localize_output=False,  # enhance preserves the input's language by design
     )
     parsed = llm_service.parse_json(resp.text) or {}
     if not isinstance(parsed, dict):
@@ -260,8 +265,11 @@ async def polish(
     )
     if notes.strip():
         user_msg += "\n\nREVISION NOTES FROM AUTHOR:\n" + fence("revision_notes", notes)
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="flow.polish", system=POLISH_SYSTEM + "\n\n" + SECURITY_CLAUSE, user_msg=user_msg,
+        db, user, page="flow.polish",
+        system=localized_prompt("flow.polish", lang, POLISH_SYSTEM) + "\n\n" + security_clause(lang),
+        user_msg=user_msg,
         temperature=0.7, max_tokens=64000, story_id=story_id,
     )
     return FlowPolishResponse(polished=resp.text.strip(), fallback=fb)
@@ -276,8 +284,11 @@ async def extract(db: AsyncSession, user: User, story_id: str, polished: str) ->
         "POLISHED SCENE (analyze ONLY this):\n"
         f"{fence('polished_scene', polished)}"
     )
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="flow.extract", system=EXTRACT_SYSTEM + "\n\n" + SECURITY_CLAUSE, user_msg=user_msg,
+        db, user, page="flow.extract",
+        system=localized_prompt("flow.extract", lang, EXTRACT_SYSTEM) + "\n\n" + security_clause(lang),
+        user_msg=user_msg,
         json_mode=True, temperature=0.2, max_tokens=64000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text) or {}

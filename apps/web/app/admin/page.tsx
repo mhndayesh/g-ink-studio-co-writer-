@@ -5,19 +5,136 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as api from "@/lib/api";
 import { useEntitlement } from "@/lib/useEntitlement";
 import { ActAsControl } from "@/components/billing/ActAsControl";
+import { useI18n, type Locale } from "@/lib/i18n";
 
-const PERIODS: { label: string; days: number | null }[] = [
-  { label: "1 month", days: 30 },
-  { label: "3 months", days: 90 },
-  { label: "6 months", days: 180 },
-  { label: "1 year", days: 365 },
-  { label: "Lifetime", days: null },
-];
+const copyEn = {
+  periods: [
+    { days: 30, label: "1 month" },
+    { days: 90, label: "3 months" },
+    { days: 180, label: "6 months" },
+    { days: 365, label: "1 year" },
+    { days: null, label: "Lifetime" },
+  ] as { days: number | null; label: string }[],
+  lifetime: "Lifetime",
+  daysCount: (days: string) => `${days} days`,
+  tierNames: {
+    free: "Free trial",
+    dev_ai: "Plus",
+    byok: "Bring Your Own Key",
+    owner: "Owner",
+  } as Record<string, string>,
+  accessDenied: "Access denied",
+  restricted: "This area is restricted to site owners.",
+  panelTitle: "⚙ Admin panel",
+  panelSubtitle: "Owner-only. Your account has unlimited access to all services.",
+  promoTitle: "🎟 Promo / gift codes",
+  promoDesc: "Mint a code that grants a paid tier for a period. Share it; users redeem it in Settings.",
+  tierPlus: "Plus (dev_ai)",
+  tierByok: "Bring Your Own Key (byok)",
+  maxUses: "Max uses (blank = ∞)",
+  customCode: "Custom code (blank = auto-generate)",
+  note: "Note (e.g. Beta testers)",
+  generating: "Generating…",
+  generate: "Generate code",
+  noCodes: "No codes yet.",
+  copyCode: "Copy code",
+  codeMeta: (tier: string, duration: string, used: string, max: string) => `${tier} · ${duration} · ${used}/${max} used`,
+  deactivate: "Deactivate",
+  inactive: "inactive",
+  yourAccount: "Your account",
+  email: "Email",
+  displayName: "Display name",
+  userId: "User ID",
+  plan: "Plan",
+  meteredQ: "Metered?",
+  yes: "yes",
+  noUnlimited: "no — unlimited",
+  no: "no",
+  actionsUsedCap: "Actions used / cap",
+  tokensUsedCap: "Tokens used / cap",
+  lookupTitle: "Look up any user",
+  userIdPlaceholder: "User ID (from their profile URL or DB)",
+  lookUp: "Look up",
+  loading: "Loading…",
+  notFound: "User not found or access denied.",
+  planTier: "Plan tier",
+  planStatus: "Plan status",
+  keySource: "Key source",
+  actionsUsed: "Actions used",
+  tokensUsed: "Tokens used",
+  caps: "Cap — actions / tokens",
+  setPlan: "Set plan",
+  applyPlan: "Apply plan",
+  saving: "Saving…",
+  planSetTo: (tier: string) => `Plan set to ${tier}`,
+};
 
-function durationLabel(days: number | null): string {
-  if (days === null || days === undefined) return "Lifetime";
-  return PERIODS.find(p => p.days === days)?.label ?? `${days} days`;
-}
+type Copy = typeof copyEn;
+
+const COPY: Record<Locale, Copy> = {
+  en: copyEn,
+  ar: {
+    periods: [
+      { days: 30, label: "شهر واحد" },
+      { days: 90, label: "3 أشهر" },
+      { days: 180, label: "6 أشهر" },
+      { days: 365, label: "سنة واحدة" },
+      { days: null, label: "مدى الحياة" },
+    ],
+    lifetime: "مدى الحياة",
+    daysCount: (days: string) => `${days} يومًا`,
+    tierNames: {
+      free: "تجربة مجانية",
+      dev_ai: "بلس",
+      byok: "مفتاحك الخاص",
+      owner: "مالك",
+    },
+    accessDenied: "تم رفض الوصول",
+    restricted: "هذه المنطقة مخصّصة لمالكي الموقع فقط.",
+    panelTitle: "⚙ لوحة الإدارة",
+    panelSubtitle: "للمالك فقط. يتمتع حسابك بوصول غير محدود إلى جميع الخدمات.",
+    promoTitle: "🎟 رموز الترويج والهدايا",
+    promoDesc: "أنشئ رمزًا يمنح خطة مدفوعة لمدة محددة، وشاركه ليفعّله المستخدمون من الإعدادات.",
+    tierPlus: "بلس (dev_ai)",
+    tierByok: "مفتاحك الخاص (byok)",
+    maxUses: "الحد الأقصى للاستخدام (فارغ = ∞)",
+    customCode: "رمز مخصص (فارغ = توليد تلقائي)",
+    note: "ملاحظة (مثل: مختبِرون تجريبيون)",
+    generating: "جارٍ التوليد…",
+    generate: "توليد الرمز",
+    noCodes: "لا توجد رموز بعد.",
+    copyCode: "نسخ الرمز",
+    codeMeta: (tier: string, duration: string, used: string, max: string) => `${tier} · ${duration} · المستخدم: ${used}/${max}`,
+    deactivate: "إيقاف",
+    inactive: "غير مفعّل",
+    yourAccount: "حسابك",
+    email: "البريد الإلكتروني",
+    displayName: "اسم العرض",
+    userId: "معرّف المستخدم",
+    plan: "الخطة",
+    meteredQ: "محاسب على الاستخدام؟",
+    yes: "نعم",
+    noUnlimited: "لا — بلا حدود",
+    no: "لا",
+    actionsUsedCap: "الإجراءات المستخدمة / الحد",
+    tokensUsedCap: "الرموز المستخدمة / الحد",
+    lookupTitle: "البحث عن مستخدم",
+    userIdPlaceholder: "معرّف المستخدم (من رابط ملفه أو قاعدة البيانات)",
+    lookUp: "بحث",
+    loading: "جارٍ التحميل…",
+    notFound: "لم يُعثر على المستخدم أو لا تملك صلاحية الوصول.",
+    planTier: "فئة الخطة",
+    planStatus: "حالة الخطة",
+    keySource: "مصدر المفتاح",
+    actionsUsed: "الإجراءات المستخدمة",
+    tokensUsed: "الرموز المستخدمة",
+    caps: "الحد — الإجراءات / الرموز",
+    setPlan: "تعيين الخطة",
+    applyPlan: "تطبيق الخطة",
+    saving: "جارٍ الحفظ…",
+    planSetTo: (tier: string) => `تم تعيين الخطة إلى ${tier}`,
+  },
+};
 
 const css = {
   page: {
@@ -78,6 +195,8 @@ export default function AdminPage() {
   // the same source the API enforces — not a hardcoded email. `isRealOwner`
   // stays true even while shape-shifted into another tier for testing.
   const { isRealOwner, isLoading } = useEntitlement();
+  const { locale } = useI18n();
+  const c = COPY[locale];
 
   const { data: profile } = useQuery({
     queryKey: ["me", "profile"],
@@ -92,8 +211,8 @@ export default function AdminPage() {
     return (
       <div style={css.page}>
         <div style={css.inner}>
-          <h1 style={css.h1}>Access denied</h1>
-          <p style={css.sub}>This area is restricted to site owners.</p>
+          <h1 style={css.h1}>{c.accessDenied}</h1>
+          <p style={css.sub}>{c.restricted}</p>
         </div>
       </div>
     );
@@ -102,8 +221,8 @@ export default function AdminPage() {
   return (
     <div style={css.page}>
       <div style={css.inner}>
-        <h1 style={css.h1}>⚙ Admin panel</h1>
-        <p style={css.sub}>Owner-only. Your account has unlimited access to all services.</p>
+        <h1 style={css.h1}>{c.panelTitle}</h1>
+        <p style={css.sub}>{c.panelSubtitle}</p>
 
         <div style={css.card}><ActAsControl /></div>
         <OwnerUsageCard profile={profile} />
@@ -122,6 +241,8 @@ const btnPrimary: React.CSSProperties = {
 
 function PromoCodesCard() {
   const qc = useQueryClient();
+  const { locale, formatNumber } = useI18n();
+  const c = COPY[locale];
   const [tier, setTier] = useState<"dev_ai" | "byok">("dev_ai");
   const [days, setDays] = useState<string>("30");   // "lifetime" sentinel
   const [maxUses, setMaxUses] = useState("");
@@ -148,58 +269,68 @@ function PromoCodesCard() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "codes"] }),
   });
 
-  function copy(c: string) {
-    navigator.clipboard?.writeText(c);
-    setCopied(c);
+  function copy(text: string) {
+    navigator.clipboard?.writeText(text);
+    setCopied(text);
     setTimeout(() => setCopied(null), 1500);
   }
 
+  const durationLabel = (value: number | null) =>
+    value == null ? c.lifetime : c.periods.find(p => p.days === value)?.label ?? c.daysCount(formatNumber(value));
+
   return (
     <div style={css.card}>
-      <h2 style={css.h2}>🎟 Promo / gift codes</h2>
+      <h2 style={css.h2}>{c.promoTitle}</h2>
       <p style={{ fontSize: 13, color: "var(--muted)", margin: "-10px 0 16px" }}>
-        Mint a code that grants a paid tier for a period. Share it; users redeem it in Settings.
+        {c.promoDesc}
       </p>
       <div style={{ display: "grid", gap: 10 }}>
         <div style={css.row}>
           <select style={css.select} value={tier} onChange={e => setTier(e.target.value as "dev_ai" | "byok")}>
-            <option value="dev_ai">Plus (dev_ai)</option>
-            <option value="byok">Bring Your Own Key (byok)</option>
+            <option value="dev_ai">{c.tierPlus}</option>
+            <option value="byok">{c.tierByok}</option>
           </select>
           <select style={css.select} value={days} onChange={e => setDays(e.target.value)}>
-            {PERIODS.map(p => <option key={p.label} value={p.days === null ? "lifetime" : String(p.days)}>{p.label}</option>)}
+            {c.periods.map(p => <option key={p.label} value={p.days === null ? "lifetime" : String(p.days)}>{p.label}</option>)}
           </select>
-          <input style={css.input} placeholder="Max uses (blank = ∞)" value={maxUses}
+          <input style={css.input} placeholder={c.maxUses} value={maxUses}
             onChange={e => setMaxUses(e.target.value.replace(/[^0-9]/g, ""))} />
         </div>
         <div style={css.row}>
-          <input style={{ ...css.input, flex: 1 }} placeholder="Custom code (blank = auto-generate)" value={code} onChange={e => setCode(e.target.value)} />
-          <input style={{ ...css.input, flex: 1 }} placeholder="Note (e.g. Beta testers)" value={note} onChange={e => setNote(e.target.value)} />
+          <input style={{ ...css.input, flex: 1 }} placeholder={c.customCode} value={code} onChange={e => setCode(e.target.value)} />
+          <input style={{ ...css.input, flex: 1 }} placeholder={c.note} value={note} onChange={e => setNote(e.target.value)} />
         </div>
         <div>
           <button style={btnPrimary} disabled={create.isPending} onClick={() => create.mutate()}>
-            {create.isPending ? "Generating…" : "Generate code"}
+            {create.isPending ? c.generating : c.generate}
           </button>
         </div>
       </div>
 
       <div style={{ marginTop: 20, display: "flex", flexDirection: "column" }}>
-        {codes.length === 0 && <p style={css.key}>No codes yet.</p>}
-        {codes.map((c: any) => (
-          <div key={c.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 0", borderBottom: "1px solid var(--border)", opacity: c.active ? 1 : 0.5 }}>
-            <button onClick={() => copy(c.code)} title="Copy code"
+        {codes.length === 0 && <p style={css.key}>{c.noCodes}</p>}
+        {codes.map((item: any) => (
+          <div key={item.id} style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap", padding: "10px 0", borderBottom: "1px solid var(--border)", opacity: item.active ? 1 : 0.5 }}>
+            <button onClick={() => copy(item.code)} title={c.copyCode}
               style={{ fontFamily: "monospace", fontSize: 14, fontWeight: 700, color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-              {c.code}{copied === c.code ? " ✓" : ""}
+              {item.code}{copied === item.code ? " ✓" : ""}
             </button>
-            <span style={css.key}>{c.tier} · {durationLabel(c.duration_days)} · {c.uses}/{c.max_uses ?? "∞"} used</span>
-            {c.note && <span style={{ ...css.key, fontStyle: "italic" }}>“{c.note}”</span>}
+            <span style={css.key}>
+              {c.codeMeta(
+                c.tierNames[item.tier] ?? item.tier,
+                durationLabel(item.duration_days),
+                formatNumber(item.uses),
+                item.max_uses == null ? "∞" : formatNumber(item.max_uses),
+              )}
+            </span>
+            {item.note && <span style={{ ...css.key, fontStyle: "italic" }}>“{item.note}”</span>}
             <div style={{ flex: 1 }} />
-            {c.active
-              ? <button onClick={() => deactivate.mutate(c.id)}
+            {item.active
+              ? <button onClick={() => deactivate.mutate(item.id)}
                   style={{ fontSize: 12, color: "var(--muted)", background: "none", border: "1px solid var(--border)", borderRadius: 8, padding: "4px 10px", cursor: "pointer" }}>
-                  Deactivate
+                  {c.deactivate}
                 </button>
-              : <span style={css.key}>inactive</span>}
+              : <span style={css.key}>{c.inactive}</span>}
           </div>
         ))}
       </div>
@@ -208,6 +339,8 @@ function PromoCodesCard() {
 }
 
 function OwnerUsageCard({ profile }: { profile: any }) {
+  const { locale, formatNumber } = useI18n();
+  const c = COPY[locale];
   const { data: usage } = useQuery({
     queryKey: ["admin", "usage", profile?.id],
     queryFn: () => api.adminGetUserUsage(profile.id),
@@ -216,40 +349,42 @@ function OwnerUsageCard({ profile }: { profile: any }) {
 
   if (!profile) return null;
 
+  const tierKey: string = usage?.effective_tier ?? "owner";
+
   return (
     <div style={css.card}>
-      <h2 style={css.h2}>Your account</h2>
+      <h2 style={css.h2}>{c.yourAccount}</h2>
       <div style={css.kv}>
-        <span style={css.key}>Email</span>
+        <span style={css.key}>{c.email}</span>
         <span style={css.val}>{profile.email}</span>
       </div>
       <div style={css.kv}>
-        <span style={css.key}>Display name</span>
+        <span style={css.key}>{c.displayName}</span>
         <span style={css.val}>{profile.display_name}</span>
       </div>
       <div style={css.kv}>
-        <span style={css.key}>User ID</span>
+        <span style={css.key}>{c.userId}</span>
         <span style={{ ...css.val, fontFamily: "monospace", fontSize: 12 }}>{profile.id}</span>
       </div>
       <div style={css.kv}>
-        <span style={css.key}>Plan</span>
-        <span style={css.badge(usage?.effective_tier ?? "owner")}>
-          {usage?.effective_tier ?? "owner"} · {usage?.key_source ?? "server"}
+        <span style={css.key}>{c.plan}</span>
+        <span style={css.badge(tierKey)}>
+          {c.tierNames[tierKey] ?? tierKey} · {usage?.key_source ?? "server"}
         </span>
       </div>
       <div style={css.kv}>
-        <span style={css.key}>Metered?</span>
-        <span style={css.val}>{usage?.metered ? "yes" : "no — unlimited"}</span>
+        <span style={css.key}>{c.meteredQ}</span>
+        <span style={css.val}>{usage?.metered ? c.yes : c.noUnlimited}</span>
       </div>
       {usage?.metered && (
         <>
           <div style={css.kv}>
-            <span style={css.key}>Actions used / cap</span>
-            <span style={css.val}>{usage.usage.actions_used} / {usage.limits.max_actions ?? "∞"}</span>
+            <span style={css.key}>{c.actionsUsedCap}</span>
+            <span style={css.val}>{formatNumber(usage.usage.actions_used)} / {usage.limits.max_actions == null ? "∞" : formatNumber(usage.limits.max_actions)}</span>
           </div>
           <div style={css.kv}>
-            <span style={css.key}>Tokens used / cap</span>
-            <span style={css.val}>{usage.usage.tokens_used.toLocaleString()} / {usage.limits.max_tokens?.toLocaleString() ?? "∞"}</span>
+            <span style={css.key}>{c.tokensUsedCap}</span>
+            <span style={css.val}>{formatNumber(usage.usage.tokens_used)} / {usage.limits.max_tokens == null ? "∞" : formatNumber(usage.limits.max_tokens)}</span>
           </div>
         </>
       )}
@@ -258,6 +393,8 @@ function OwnerUsageCard({ profile }: { profile: any }) {
 }
 
 function UserLookupCard() {
+  const { locale, formatNumber } = useI18n();
+  const c = COPY[locale];
   const [userId, setUserId] = useState("");
   const [queried, setQueried] = useState("");
   const [tier, setTier] = useState<"free" | "dev_ai" | "byok">("dev_ai");
@@ -272,77 +409,82 @@ function UserLookupCard() {
 
   const setPlan = useMutation({
     mutationFn: () => api.adminSetUserPlan(queried, tier, "active"),
-    onSuccess: (res) => setMsg({ ok: true, text: `Plan set to ${res.user?.plan_tier ?? tier}` }),
+    onSuccess: (res) => {
+      const applied: string = res.user?.plan_tier ?? tier;
+      setMsg({ ok: true, text: c.planSetTo(c.tierNames[applied] ?? applied) });
+    },
     onError: (e: any) => setMsg({ ok: false, text: e.message }),
   });
 
+  const tierLabel = (key: string) => `${c.tierNames[key] ?? key} (${key})`;
+
   return (
     <div style={css.card}>
-      <h2 style={css.h2}>Look up any user</h2>
+      <h2 style={css.h2}>{c.lookupTitle}</h2>
 
       <div style={css.row}>
         <input
           style={css.input}
-          placeholder="User ID (from their profile URL or DB)"
+          placeholder={c.userIdPlaceholder}
           value={userId}
           onChange={e => setUserId(e.target.value)}
           onKeyDown={e => e.key === "Enter" && setQueried(userId.trim())}
         />
         <button style={css.btn(true)} onClick={() => { setQueried(userId.trim()); setMsg(null); }}>
-          Look up
+          {c.lookUp}
         </button>
       </div>
 
-      {isLoading && <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 12 }}>Loading…</p>}
-      {error && <p style={css.err}>User not found or access denied.</p>}
+      {isLoading && <p style={{ color: "var(--muted)", fontSize: 13, marginTop: 12 }}>{c.loading}</p>}
+      {error && <p style={css.err}>{c.notFound}</p>}
 
       {usage && (
         <div style={{ marginTop: 18 }}>
           <div style={css.kv}>
-            <span style={css.key}>Plan tier</span>
-            <span style={css.badge(usage.effective_tier)}>{usage.effective_tier}</span>
+            <span style={css.key}>{c.planTier}</span>
+            <span style={css.badge(usage.effective_tier)}>{tierLabel(usage.effective_tier)}</span>
           </div>
           <div style={css.kv}>
-            <span style={css.key}>Plan status</span>
+            <span style={css.key}>{c.planStatus}</span>
             <span style={css.val}>{usage.plan_status}</span>
           </div>
           <div style={css.kv}>
-            <span style={css.key}>Key source</span>
+            <span style={css.key}>{c.keySource}</span>
             <span style={css.val}>{usage.key_source}</span>
           </div>
           <div style={css.kv}>
-            <span style={css.key}>Metered?</span>
-            <span style={css.val}>{usage.metered ? "yes" : "no"}</span>
+            <span style={css.key}>{c.meteredQ}</span>
+            <span style={css.val}>{usage.metered ? c.yes : c.no}</span>
           </div>
           <div style={css.kv}>
-            <span style={css.key}>Actions used</span>
-            <span style={css.val}>{usage.usage.actions_used}</span>
+            <span style={css.key}>{c.actionsUsed}</span>
+            <span style={css.val}>{formatNumber(usage.usage.actions_used)}</span>
           </div>
           <div style={css.kv}>
-            <span style={css.key}>Tokens used</span>
-            <span style={css.val}>{usage.usage.tokens_used.toLocaleString()}</span>
+            <span style={css.key}>{c.tokensUsed}</span>
+            <span style={css.val}>{formatNumber(usage.usage.tokens_used)}</span>
           </div>
           <div style={css.kv}>
-            <span style={css.key}>Cap — actions / tokens</span>
+            <span style={css.key}>{c.caps}</span>
             <span style={css.val}>
-              {usage.limits.max_actions ?? "∞"} / {usage.limits.max_tokens?.toLocaleString() ?? "∞"}
+              {usage.limits.max_actions == null ? "∞" : formatNumber(usage.limits.max_actions)} / {usage.limits.max_tokens == null ? "∞" : formatNumber(usage.limits.max_tokens)}
             </span>
           </div>
 
           <div style={{ marginTop: 20 }}>
-            <span style={css.label}>Set plan</span>
+            <span style={css.label}>{c.setPlan}</span>
             <div style={css.row}>
               <select style={css.select} value={tier} onChange={e => setTier(e.target.value as any)}>
-                <option value="free">free</option>
-                <option value="dev_ai">dev_ai (house-key AI)</option>
-                <option value="byok">byok (bring own key)</option>
+                <option value="free">{tierLabel("free")}</option>
+                <option value="dev_ai">{tierLabel("dev_ai")}</option>
+                <option value="byok">{tierLabel("byok")}</option>
               </select>
               <button
                 style={css.btn(true)}
                 onClick={() => { setMsg(null); setPlan.mutate(); }}
                 disabled={setPlan.isPending}
               >
-                {setPlan.isPending ? "Saving…" : "Apply plan"}
+                {setPlan.isPending ? c.saving : c.applyPlan}
               </button>
             </div>
             {msg && <p style={msg.ok ? css.ok : css.err}>{msg.text}</p>}

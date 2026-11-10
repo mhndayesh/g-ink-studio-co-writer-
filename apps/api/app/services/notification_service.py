@@ -12,6 +12,7 @@ import logging
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.db.models import User
 from app.db.publishing_models import Notification, Publication, PublicationFollow
 
 log = logging.getLogger("gink.notify")
@@ -38,16 +39,26 @@ async def notify_new_chapters(
         if not followers:
             return 0
 
+        locale_by_id = {
+            uid: locale
+            for uid, locale in (await db.execute(
+                select(User.id, User.locale).where(User.id.in_(followers))
+            )).all()
+        }
+
         count = 0
         for number, title in new_chapters:
             chap_title = (title or f"Chapter {number}").strip()
             for reader_id in followers:
+                is_ar = locale_by_id.get(reader_id) == "ar"
                 db.add(Notification(
                     user_id=reader_id,
                     kind="new_chapter",
                     publication_id=pub.id,
-                    title=f"New chapter in “{story_title}”",
-                    body=f"Chapter {number}: {chap_title}",
+                    title=(f"\u0641\u0635\u0644 \u062c\u062f\u064a\u062f \u0641\u064a \u00ab{story_title}\u00bb"
+                           if is_ar else f"New chapter in \u201c{story_title}\u201d"),
+                    body=(f"\u0627\u0644\u0641\u0635\u0644 {number}: {chap_title}"
+                          if is_ar else f"Chapter {number}: {chap_title}"),
                     link=f"/read/{pub.slug}/{number}",
                 ))
                 count += 1

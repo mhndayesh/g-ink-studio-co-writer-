@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request
 from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.deps import CurrentUser, DB
+from app.core.i18n import locale_from_accept_language
 from app.core.ratelimit import limiter
 from app.core.errors import AppError, BadRequest, Forbidden, envelope_ok
 from app.core.security import decrypt_secret, encrypt_secret
@@ -180,6 +181,7 @@ async def test(request: Request, payload: dict, user: CurrentUser, db: DB):
         })
 
     page = "flow.extract" if lane == "technical" else "flow.polish"
+    language = locale_from_accept_language(request.headers.get("accept-language"))
     resp, fallback = await llm_service.run(
         db,
         user,
@@ -188,6 +190,7 @@ async def test(request: Request, payload: dict, user: CurrentUser, db: DB):
         user_msg=prompt,
         max_tokens=200,
         meter=False,  # diagnostics never consume the user's quota
+        language=language,
     )
     await db.commit()
     return envelope_ok({"text": resp.text, "model": resp.model, "fallback": fallback})

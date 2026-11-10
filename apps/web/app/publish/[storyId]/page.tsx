@@ -6,9 +6,27 @@ import { useRequireAuth } from "@/lib/auth";
 import * as api from "@/lib/api";
 import PublishingHub from "@/components/publishing/PublishingHub";
 import ExportHub from "@/components/publishing/ExportHub";
+import { useI18n, type Locale } from "@/lib/i18n";
+
+const copyEn = {
+  heading: "Publishing",
+  manageFor: (title: string) => `Manage the public page for “${title}”`,
+};
+
+type Copy = typeof copyEn;
+
+const COPY: Record<Locale, Copy> = {
+  en: copyEn,
+  ar: {
+    heading: "النشر",
+    manageFor: (title: string) => `إدارة الصفحة العامة لقصة «${title}»`,
+  },
+};
 
 export default function PublishPage() {
   const params = useParams<{ storyId: string }>();
+  const { locale } = useI18n();
+  const c = COPY[locale];
   useRequireAuth();
 
   const { data: story } = useQuery({
@@ -33,9 +51,9 @@ export default function PublishPage() {
   return (
     <div className="max-w-3xl mx-auto px-6 py-8 space-y-10">
       <div>
-        <h1 className="text-2xl font-semibold text-ink-text">Publishing</h1>
+        <h1 className="text-2xl font-semibold text-ink-text">{c.heading}</h1>
         <p className="text-ink-text2 text-sm mt-1">
-          Manage the public page for &ldquo;{story.title}&rdquo;
+          {c.manageFor(story.title)}
         </p>
       </div>
 

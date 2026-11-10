@@ -10,11 +10,13 @@ import logging
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.prompt_safety import SECURITY_CLAUSE, fence
+from app.core.prompt_safety import fence, security_clause
 from app.db.models import Chapter, ContinuityReport, User
 from app.db.schemas import CheckFinding, RevisionPass, StoryCheckResponse
 from app.services import llm_service, rag_service
 from app.services.context_builder import build_story_context
+from app.services.prompts_ar import localized_prompt
+from app.services.story_language import get_story_language
 
 log = logging.getLogger("gink.check")
 
@@ -24,6 +26,14 @@ PASS_GUIDANCE: dict[str, str] = {
     "logic": "Focus on continuity, timeline order, world rules, causal logic, spatial logic, information flow, and contradictions.",
     "dialogue": "Focus on character voice fingerprints, dialogue attribution, voice drift, characters sounding too similar, and subtext.",
     "tightening": "Focus on repetition, unclear beats, overwritten passages, missing sensory contrast, and opportunities to sharpen without changing plot facts.",
+}
+
+PASS_GUIDANCE_AR: dict[str, str] = {
+    "structure": "ركّز على غرض المشهد، الإعداد والدفع، الإيقاع، التصاعد، الحبكات النائمة، وهل يغيّر كل مشهد حالة القصة.",
+    "character": "ركّز على الدافع، الفاعلية، حركة القوس، تحولات العلاقات، المعرفة المستحيلة، وهل تتوافق الخيارات مع حالة الشخصية الراسخة.",
+    "logic": "ركّز على الاستمرارية، ترتيب الزمن، قواعد العالم، المنطق السببي، المنطق المكاني، تدفق المعلومات، والتناقضات.",
+    "dialogue": "ركّز على بصمات صوت الشخصيات، إسناد الحوار، انحراف الصوت، تشابه الشخصيات، والنص الباطن.",
+    "tightening": "ركّز على التكرار، الإيقاعات غير الواضحة، الفقرات المفرطة، غياب التباين الحسي، وفرص الشحذ دون تغيير حقائق الحبكة.",
 }
 
 SYSTEM = """You are a story check editor. You will be given a STORY CONTEXT (world bible,
@@ -83,13 +93,17 @@ async def check(
     )
     # Fence author-controlled context + target so embedded "instructions" in the
     # manuscript can't hijack the review (consistent with the other AI surfaces).
+    lang = await get_story_language(db, story_id)
+    focus = PASS_GUIDANCE_AR[pass_type] if lang == "ar" else PASS_GUIDANCE[pass_type]
     user_msg = (
         f"REVISION PASS: {pass_type}\n"
-        f"PASS FOCUS: {PASS_GUIDANCE[pass_type]}\n\n"
+        f"PASS FOCUS: {focus}\n\n"
         f"STORY CONTEXT:\n{fence('story_context', ctx)}\n\n{fence('author_draft', target)}"
     )
     resp, fb = await llm_service.run(
-        db, user, page=f"story_check.{pass_type}", system=SYSTEM + "\n\n" + SECURITY_CLAUSE, user_msg=user_msg,
+        db, user, page=f"story_check.{pass_type}",
+        system=localized_prompt("story_check", lang, SYSTEM) + "\n\n" + security_clause(lang),
+        user_msg=user_msg,
         json_mode=True, temperature=0.3, max_tokens=128000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text) or {}

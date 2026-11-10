@@ -14,11 +14,13 @@ from typing import AsyncIterator
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import PaymentRequired, QuotaExceeded
+from app.core.i18n import Locale, output_language_clause
 from app.db.models import LLMRun, User
 from app.services import entitlement_service
 from app.services.llm.base import ChatResponse, LLMProvider, Message
 from app.services.llm.factory import get_provider_for_page
 from app.services.llm.fallback import FallbackProvider
+from app.services.story_language import get_story_language
 
 log = logging.getLogger("gink.llm")
 
@@ -57,6 +59,8 @@ async def run(
     story_id: str | None = None,
     provider: LLMProvider | None = None,
     meter: bool = True,
+    language: Locale | None = None,
+    localize_output: bool = True,
 ) -> tuple[ChatResponse, bool]:
     """Run a chat completion; log result; return (response, used_fallback).
 
@@ -73,7 +77,12 @@ async def run(
     if provider is None:
         provider = await get_provider_for_page(db, user, page, key_source=auth.key_source)
 
-    messages = [Message("system", system), Message("user", user_msg)]
+    lang = language or await get_story_language(db, story_id)
+    effective_system = (
+        system + "\n\n" + output_language_clause(lang, json_mode=json_mode)
+        if localize_output else system
+    )
+    messages = [Message("system", effective_system), Message("user", user_msg)]
 
     # Insert a placeholder LLMRun row BEFORE calling the provider, on a FRESH,
     # COMMITTED session (mirrors the streaming path). The metering query
@@ -85,7 +94,7 @@ async def run(
     logged_key_source = "none" if not meter else auth.key_source
     run_id = await _insert_stream_placeholder(
         user_id=user.id, story_id=story_id, provider_name=provider.name, page=page,
-        system=system, user_msg=user_msg, key_source=logged_key_source,
+        system=effective_system, user_msg=user_msg, key_source=logged_key_source,
     )
 
     started = time.monotonic()
@@ -154,7 +163,7 @@ async def run(
     # map). Falls back to inserting a row if the placeholder insert had failed.
     await _finalize_run_metrics(
         run_id=run_id, user_id=user.id, story_id=story_id, page=page,
-        system=system, user_msg=user_msg,
+        system=effective_system, user_msg=user_msg,
         provider_name="fallback" if fallback_used else provider.name,
         model=resp.model, response_text=resp.text,
         tokens_in=resp.tokens_in, tokens_out=resp.tokens_out,
@@ -268,6 +277,8 @@ async def open_stream(
     max_tokens: int | None = None,
     story_id: str | None = None,
     meter: bool = True,
+    language: Locale | None = None,
+    localize_output: bool = True,
 ) -> AsyncIterator[str]:
     """Authorize + resolve the provider NOW (request session alive), then return
     an async generator that streams text deltas and logs the run when finished.
@@ -278,6 +289,11 @@ async def open_stream(
     auth = await entitlement_service.authorize_ai(db, user, page, meter=meter)
     _gate_or_raise(auth)
     provider = await get_provider_for_page(db, user, page, key_source=auth.key_source)
+    lang = language or await get_story_language(db, story_id)
+    effective_system = (
+        system + "\n\n" + output_language_clause(lang)
+        if localize_output else system
+    )
 
     # Capture plain values — do NOT close over the request session or ORM objects.
     uid = user.id
@@ -289,11 +305,11 @@ async def open_stream(
     logged_key_source = "none" if not meter else key_source
     run_id = await _insert_stream_placeholder(
         user_id=uid, story_id=story_id, provider_name=pname, page=page,
-        system=system, user_msg=user_msg, key_source=logged_key_source,
+        system=effective_system, user_msg=user_msg, key_source=logged_key_source,
     )
 
     async def _gen() -> AsyncIterator[str]:
-        messages = [Message("system", system), Message("user", user_msg)]
+        messages = [Message("system", effective_system), Message("user", user_msg)]
         started = time.monotonic()
         chunks: list[str] = []
         fallback_used = False
@@ -315,7 +331,7 @@ async def open_stream(
         finally:
             await _finalize_stream_run(
                 run_id=run_id, user_id=uid, story_id=story_id, provider_name=pname,
-                page=page, system=system, user_msg=user_msg, full_text="".join(chunks),
+                page=page, system=effective_system, user_msg=user_msg, full_text="".join(chunks),
                 elapsed_ms=(time.monotonic() - started) * 1000.0,
                 fallback_used=fallback_used, error=error,
                 key_source=("none" if (fallback_used or not meter) else key_source),

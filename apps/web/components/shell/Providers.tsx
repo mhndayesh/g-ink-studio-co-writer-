@@ -6,8 +6,9 @@ import { UpgradeModal } from "@/components/billing/UpgradeModal";
 import { TestModeBanner } from "@/components/billing/TestModeBanner";
 import { useUI } from "@/lib/store";
 import { ApiError, isAiGateError } from "@/lib/api";
+import { I18nProvider, type Locale } from "@/lib/i18n";
 
-export function Providers({ children }: { children: React.ReactNode }) {
+export function Providers({ children, initialLocale = "en" }: { children: React.ReactNode; initialLocale?: Locale }) {
   // staleTime 0 so navigating between tabs always reflects the latest server
   // state (a chapter deleted on the Chapters tab is immediately reflected on
   // Flow). refetchOnWindowFocus still off — only re-fetch on remount.
@@ -25,20 +26,25 @@ export function Providers({ children }: { children: React.ReactNode }) {
           // Optimistic-lock / concurrent-change conflict (version_id_col). Surface
           // it instead of letting the autosave fail silently — non-destructive, so
           // the user's in-progress text isn't replaced; they choose when to reload.
+          const isAr = typeof document !== "undefined" && document.documentElement.lang === "ar";
           window.alert(
             err.message ||
-              "This was changed in another tab or session. Reload to get the latest version, then reapply your edit.",
+              (isAr
+                ? "تغيّر هذا المحتوى في تبويب أو جلسة أخرى. أعد التحميل للحصول على أحدث نسخة، ثم أعد تطبيق تعديلك."
+                : "This was changed in another tab or session. Reload to get the latest version, then reapply your edit."),
           );
         }
       },
     }),
   }));
   return (
-    <QueryClientProvider client={client}>
-      <TestModeBanner />
-      {children}
-      <BusyOverlay />
-      <UpgradeModal />
-    </QueryClientProvider>
+    <I18nProvider initialLocale={initialLocale}>
+      <QueryClientProvider client={client}>
+        <TestModeBanner />
+        {children}
+        <BusyOverlay />
+        <UpgradeModal />
+      </QueryClientProvider>
+    </I18nProvider>
   );
 }

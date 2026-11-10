@@ -4,6 +4,7 @@ import { useMutation } from "@tanstack/react-query";
 import { CheckCircle2, XCircle, KeyRound, ListChecks } from "lucide-react";
 import * as api from "@/lib/api";
 import { Btn, FG, Inp, Sel } from "@/components/ui/Primitives";
+import { useI18n, type Locale } from "@/lib/i18n";
 
 export type Provider = "lmstudio" | "llamacpp" | "openai" | "anthropic" | "openrouter" | "gemini" | "deepseek";
 
@@ -29,14 +30,70 @@ export const PROVIDER_DEFAULTS: Record<Provider, { base_url: string; model: stri
   deepseek:   { base_url: "https://api.deepseek.com/v1", model: "deepseek-v4-flash", embed_model: "" },
 };
 
-const PROVIDER_LABELS: Record<Provider, string> = {
-  lmstudio: "LM Studio (local)",
-  llamacpp: "llama.cpp / llama-server (local)",
+// Brand names stay as-is; only the "(local)" qualifier is localized.
+const PROVIDER_NAMES: Record<Provider, string> = {
+  lmstudio: "LM Studio",
+  llamacpp: "llama.cpp / llama-server",
   openai: "OpenAI",
   anthropic: "Anthropic",
   openrouter: "OpenRouter",
   gemini: "Google Gemini",
   deepseek: "DeepSeek",
+};
+
+const copyEn = {
+  localSuffix: " (local)",
+  reachable: "reachable",
+  unreachable: (detail: string) => `unreachable (${detail})`,
+  provider: "Provider",
+  baseUrl: "Base URL",
+  baseUrlUnused: "Not used — Anthropic Messages API.",
+  chatModel: "Chat model",
+  availablePick: (count: string) => `${count} available — pick or type`,
+  embeddingModel: "Embedding model",
+  cantEmbed: (provider: string) => `${provider} can't embed — will use LM Studio.`,
+  apiKey: "API key",
+  apiKeyHint: "Encrypted at rest. Leave blank to keep the current one.",
+  keySet: "•••••• (set)",
+  keyPaste: "paste key here",
+  testing: "Testing…",
+  test: "Test",
+  loading: "Loading…",
+  loadModels: "Load models",
+  fallbackUnreachable: "fallback — not reachable",
+  couldntList: (error: string) => `couldn't list models — ${error}`,
+  foundModels: (count: string) => `found ${count} model${count === "1" ? "" : "s"}`,
+  requestFailed: "request failed",
+};
+
+type Copy = typeof copyEn;
+
+const COPY: Record<Locale, Copy> = {
+  en: copyEn,
+  ar: {
+    localSuffix: " (محلي)",
+    reachable: "متاح",
+    unreachable: (detail: string) => `غير متاح (${detail})`,
+    provider: "المزوّد",
+    baseUrl: "عنوان الأساس",
+    baseUrlUnused: "غير مستخدم — واجهة Anthropic Messages.",
+    chatModel: "نموذج المحادثة",
+    availablePick: (count: string) => `${count} متاح — اختر أو اكتب`,
+    embeddingModel: "نموذج التضمين",
+    cantEmbed: (provider: string) => `${provider} لا يدعم التضمين — سيُستخدم LM Studio بدلًا منه.`,
+    apiKey: "مفتاح API",
+    apiKeyHint: "مشفَّر عند التخزين. اتركه فارغًا للإبقاء على المفتاح الحالي.",
+    keySet: "•••••• (مضبوط)",
+    keyPaste: "ألصق المفتاح هنا",
+    testing: "جارٍ الاختبار…",
+    test: "اختبار",
+    loading: "جارٍ التحميل…",
+    loadModels: "تحميل النماذج",
+    fallbackUnreachable: "وضع احتياطي — غير متاح",
+    couldntList: (error: string) => `تعذّر سرد النماذج — ${error}`,
+    foundModels: (count: string) => `تم العثور على ${count} نموذج`,
+    requestFailed: "فشل الطلب",
+  },
 };
 
 export function emptyProvider(p: Provider = "lmstudio"): ProviderValue {
@@ -56,6 +113,9 @@ export function ProviderForm({
   showEmbed?: boolean;
   status?: { reachable: boolean; detail: string; provider: string; model: string };
 }) {
+  const { locale, formatNumber } = useI18n();
+  const c = COPY[locale];
+
   const test = useMutation({
     mutationKey: ["llm", "llm.test"],
     mutationFn: () => api.llmTest({ lane }),
@@ -86,33 +146,38 @@ export function ProviderForm({
   const isEmbeddingSlot = lane === "embedding";
   const cantEmbed = EMBED_INCAPABLE.includes(value.provider);
   // Embedding slots only allow embed-capable providers.
-  const providerOptions = (Object.keys(PROVIDER_LABELS) as Provider[]).filter(
+  const providerOptions = (Object.keys(PROVIDER_NAMES) as Provider[]).filter(
     (p) => !isEmbeddingSlot || !EMBED_INCAPABLE.includes(p),
   );
+
+  const providerLabel = (p: Provider) => {
+    const base = PROVIDER_NAMES[p];
+    return p === "lmstudio" || p === "llamacpp" ? `${base}${c.localSuffix}` : base;
+  };
 
   return (
     <div className="space-y-3">
       {status && (
         <div className={`inline-flex items-center gap-1 text-xs ${status.reachable ? "text-ink-green" : "text-ink-red"}`}>
           {status.reachable ? <CheckCircle2 size={13}/> : <XCircle size={13}/>}
-          {status.provider}/{status.model} — {status.reachable ? "reachable" : `unreachable (${status.detail})`}
+          {status.provider}/{status.model} — {status.reachable ? c.reachable : c.unreachable(status.detail)}
         </div>
       )}
 
-      <FG label="Provider">
+      <FG label={c.provider}>
         <Sel value={value.provider} onChange={(e) => applyProvider(e.target.value as Provider)}>
-          {providerOptions.map((p) => <option key={p} value={p}>{PROVIDER_LABELS[p]}</option>)}
+          {providerOptions.map((p) => <option key={p} value={p}>{providerLabel(p)}</option>)}
         </Sel>
       </FG>
 
-      <FG label="Base URL" hint={isAnthropic ? "Not used — Anthropic Messages API." : ""}>
+      <FG label={c.baseUrl} hint={isAnthropic ? c.baseUrlUnused : ""}>
         <Inp value={value.base_url} onChange={(e) => onChange({ ...value, base_url: e.target.value })}
              placeholder={PROVIDER_DEFAULTS[value.provider].base_url} disabled={isAnthropic} />
       </FG>
 
       <div className={`grid gap-3 ${showEmbed && !isEmbeddingSlot ? "md:grid-cols-2" : ""}`}>
         {!isEmbeddingSlot && (
-          <FG label="Chat model" hint={chatModels.length ? `${chatModels.length} available — pick or type` : ""}>
+          <FG label={c.chatModel} hint={chatModels.length ? c.availablePick(formatNumber(chatModels.length)) : ""}>
             <Inp list={chatListId} value={value.model} onChange={(e) => onChange({ ...value, model: e.target.value })}
                  placeholder={PROVIDER_DEFAULTS[value.provider].model} />
             <datalist id={chatListId}>
@@ -121,7 +186,7 @@ export function ProviderForm({
           </FG>
         )}
         {(showEmbed || isEmbeddingSlot) && (
-          <FG label="Embedding model" hint={cantEmbed ? `${PROVIDER_LABELS[value.provider]} can't embed — will use LM Studio.` : (embedModels.length ? `${embedModels.length} available — pick or type` : "")}>
+          <FG label={c.embeddingModel} hint={cantEmbed ? c.cantEmbed(providerLabel(value.provider)) : (embedModels.length ? c.availablePick(formatNumber(embedModels.length)) : "")}>
             <Inp list={embedListId} value={value.embed_model} onChange={(e) => onChange({ ...value, embed_model: e.target.value })}
                  placeholder={PROVIDER_DEFAULTS[value.provider].embed_model} disabled={cantEmbed} />
             <datalist id={embedListId}>
@@ -132,37 +197,37 @@ export function ProviderForm({
       </div>
 
       {value.provider !== "lmstudio" && value.provider !== "llamacpp" && (
-        <FG label="API key" hint="Encrypted at rest. Leave blank to keep the current one.">
+        <FG label={c.apiKey} hint={c.apiKeyHint}>
           <div className="relative">
-            <KeyRound size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-ink-text3"/>
-            <Inp type="password" className="pl-7" value={value.api_key}
+            <KeyRound size={14} className="absolute start-2 top-1/2 -translate-y-1/2 text-ink-text3"/>
+            <Inp type="password" className="ps-7" value={value.api_key}
                  onChange={(e) => onChange({ ...value, api_key: e.target.value })}
-                 placeholder={value.has_api_key ? "•••••• (set)" : "paste key here"} />
+                 placeholder={value.has_api_key ? c.keySet : c.keyPaste} />
           </div>
         </FG>
       )}
 
       <div className="flex flex-wrap items-center gap-2">
         <Btn onClick={() => test.mutate()} disabled={test.isPending}>
-          {test.isPending ? "Testing…" : "Test"}
+          {test.isPending ? c.testing : c.test}
         </Btn>
         <Btn variant="ghost" onClick={() => loadModels.mutate()} disabled={loadModels.isPending}>
-          <ListChecks size={13} className="mr-1 inline" />
-          {loadModels.isPending ? "Loading…" : "Load models"}
+          <ListChecks size={13} className="me-1 inline" />
+          {loadModels.isPending ? c.loading : c.loadModels}
         </Btn>
         {test.data && (
           <span className={`text-xs ${test.data.fallback ? "text-ink-red" : "text-ink-text2"}`}>
-            {test.data.fallback ? "fallback — not reachable" : `✓ ${test.data.model}: ${test.data.text.slice(0, 60)}`}
+            {test.data.fallback ? c.fallbackUnreachable : `✓ ${test.data.model}: ${test.data.text.slice(0, 60)}`}
           </span>
         )}
         {loadModels.data && (
           <span className={`text-xs ${loadModels.data.error ? "text-ink-red" : "text-ink-text2"}`}>
             {loadModels.data.error
-              ? `couldn't list models — ${loadModels.data.error}`
-              : `found ${loadModels.data.count} model${loadModels.data.count === 1 ? "" : "s"}`}
+              ? c.couldntList(loadModels.data.error)
+              : c.foundModels(formatNumber(loadModels.data.count))}
           </span>
         )}
-        {loadModels.isError && <span className="text-xs text-ink-red">request failed</span>}
+        {loadModels.isError && <span className="text-xs text-ink-red">{c.requestFailed}</span>}
       </div>
     </div>
   );

@@ -21,7 +21,7 @@ Runs on **Linux, macOS, and Windows**. `./run.sh` is Bash, so on Windows use **W
 2. Auto-generates `apps/api/.env` with fresh `JWT_SECRET` + `LLM_KEY_ENCRYPTION_KEY` on first run
 3. Appends missing `QDRANT_URL` / `NEO4J_URI` lines to an existing `.env` (idempotent)
 4. Starts **Qdrant** (`gink-qdrant` on :6333) and **Neo4j** (`gink-neo4j` on :7687/:7474) via Docker — skips if already running, skips silently if Docker is unavailable
-5. Applies DB migrations (`alembic upgrade head`) — idempotent, currently at **head 0018**
+5. Applies DB migrations (`alembic upgrade head`) — idempotent, currently at **head 0022**
 6. Starts the **backend** on **:8080** and **frontend** on **:3000** with `[api]`/`[web]`-tagged logs
 7. **Ctrl+C** stops backend, frontend, and the Docker containers
 

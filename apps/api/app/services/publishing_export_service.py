@@ -91,7 +91,8 @@ try:
 except Exception:  # pragma: no cover
     _HAS_SHAPING = False
 
-_RTL_RE = re.compile(r"[؀-ۿݐ-ݿࢠ-ࣿﭐ-﷿ﹰ-﻿֐-׿]")
+_RTL_RE = re.compile(r"[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]")
+_AR_DIGITS = str.maketrans("0123456789", "\u0660\u0661\u0662\u0663\u0664\u0665\u0666\u0667\u0668\u0669")
 
 
 def _is_rtl(text: str) -> bool:
@@ -106,9 +107,6 @@ def _shape(text: str) -> str:
         return get_display(arabic_reshaper.reshape(text))
     except Exception:
         return text
-
-
-_AR_DIGITS = str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩")
 
 
 def _ar_num(n) -> str:
@@ -221,7 +219,7 @@ def export_pdf(
                                   fontSize=14, leading=20, alignment=TA_CENTER, textColor=colors.HexColor("#444444"))
     tagline_style = ParagraphStyle("Tagline", parent=base, fontName=(ARABIC if _is_rtl(tagline or "") else SERIF_ITALIC),
                                    fontSize=12, leading=18, alignment=TA_CENTER, textColor=colors.HexColor("#666666"))
-    copyright_style = ParagraphStyle("Copyright", parent=base, fontName=SERIF, fontSize=9, leading=15,
+    copyright_style = ParagraphStyle("Copyright", parent=base, fontName=(ARABIC if title_rtl else SERIF), fontSize=9, leading=15,
                                      alignment=TA_CENTER, textColor=colors.HexColor("#777777"))
     chap_num_style = ParagraphStyle("ChapterNum", parent=base, fontName=SERIF, fontSize=11, leading=16,
                                     alignment=TA_CENTER, textColor=colors.HexColor("#999999"), spaceAfter=6)
@@ -262,11 +260,14 @@ def export_pdf(
     # ── Copyright / colophon page ─────────────────────────────────────────────
     year = datetime.now(timezone.utc).year
     flow.append(Spacer(1, 6.0 * inch))
-    flow.append(Paragraph(_html.escape(_clean_text(title), quote=False), copyright_style))
-    flow.append(Paragraph(f"© {year} {_html.escape(author, quote=False)}", copyright_style))
+    flow.append(Paragraph(_shape(_clean_text(title)) if title_rtl else _html.escape(_clean_text(title), quote=False), copyright_style))
+    author_line = f"\u00a9 {year} {_shape(author)}" if title_rtl else f"\u00a9 {year} {_html.escape(author, quote=False)}"
+    flow.append(Paragraph(author_line, copyright_style))
     flow.append(Spacer(1, 0.2 * inch))
-    flow.append(Paragraph("All rights reserved.", copyright_style))
-    flow.append(Paragraph("Produced with G-Ink Studio", copyright_style))
+    rights = "\u062c\u0645\u064a\u0639 \u0627\u0644\u062d\u0642\u0648\u0642 \u0645\u062d\u0641\u0648\u0638\u0629." if title_rtl else "All rights reserved."
+    produced = "\u0623\u064f\u0646\u062a\u062c \u0628\u0648\u0627\u0633\u0637\u0629 G-Ink Studio" if title_rtl else "Produced with G-Ink Studio"
+    flow.append(Paragraph(rights, copyright_style))
+    flow.append(Paragraph(produced, copyright_style))
     flow.append(PageBreak())
 
     # ── Chapters ──────────────────────────────────────────────────────────────
@@ -423,16 +424,19 @@ def export_docx(
     section.top_margin = Inches(1)
     section.bottom_margin = Inches(1)
 
-    FONT_NAME = "Courier New"
+    sample = (title or "") + " " + " ".join((ch.get("content") or "")[:200] for ch in chapters[:3])
+    rtl = _is_rtl(sample)
+    FONT_NAME = "Arial" if rtl else "Courier New"
     FONT_SIZE = Pt(12)
+    default_align = WD_ALIGN_PARAGRAPH.RIGHT if rtl else WD_ALIGN_PARAGRAPH.LEFT
 
     def _set_font(run):
         run.font.name = FONT_NAME
         run.font.size = FONT_SIZE
 
-    def _para(text: str, align=WD_ALIGN_PARAGRAPH.LEFT, bold=False):
+    def _para(text: str, align=None, bold=False):
         p = doc.add_paragraph()
-        p.alignment = align
+        p.alignment = align if align is not None else default_align
         p.paragraph_format.line_spacing = Pt(24)
         p.paragraph_format.space_before = Pt(0)
         p.paragraph_format.space_after = Pt(0)
@@ -442,7 +446,10 @@ def export_docx(
         return p
 
     total_words = sum(_word_count(ch["content"]) for ch in chapters)
-    word_est = f"~{round(total_words / 1000)}k words" if total_words > 999 else f"{total_words} words"
+    word_est = (
+        (f"~{round(total_words / 1000)} \u0623\u0644\u0641 \u0643\u0644\u0645\u0629" if total_words > 999 else f"{total_words} \u0643\u0644\u0645\u0629")
+        if rtl else (f"~{round(total_words / 1000)}k words" if total_words > 999 else f"{total_words} words")
+    )
 
     header_p = doc.add_paragraph()
     header_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
@@ -454,12 +461,13 @@ def export_docx(
     for _ in range(8):
         _para("")
     _para(_clean_text(title).upper(), align=WD_ALIGN_PARAGRAPH.CENTER, bold=True)
-    _para("by", align=WD_ALIGN_PARAGRAPH.CENTER)
+    _para("\u0628\u0642\u0644\u0645" if rtl else "by", align=WD_ALIGN_PARAGRAPH.CENTER)
     _para(author, align=WD_ALIGN_PARAGRAPH.CENTER)
     doc.add_page_break()
 
     for ch in chapters:
-        ch_title = f"Chapter {ch['number']}: {_clean_text(ch['title'])}"
+        ch_title = (f"\u0627\u0644\u0641\u0635\u0644 {ch['number']}: {_clean_text(ch['title'])}"
+                    if rtl else f"Chapter {ch['number']}: {_clean_text(ch['title'])}")
         for _ in range(10):
             _para("")
         _para(ch_title.upper(), align=WD_ALIGN_PARAGRAPH.CENTER, bold=True)
@@ -478,7 +486,7 @@ def export_docx(
                 first = False
                 continue
             p = doc.add_paragraph()
-            p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+            p.alignment = default_align
             p.paragraph_format.line_spacing = Pt(24)
             p.paragraph_format.space_before = Pt(0)
             p.paragraph_format.space_after = Pt(0)

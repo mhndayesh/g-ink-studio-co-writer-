@@ -20,6 +20,7 @@ export class ApiError extends Error {
 export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers || {});
   if (!headers.has("Content-Type") && init.body) headers.set("Content-Type", "application/json");
+  if (typeof document !== "undefined") headers.set("Accept-Language", document.documentElement.lang || "en");
   const hadAuthHeader = headers.has("Authorization");
   const token = await getToken();
   if (token && !hadAuthHeader) headers.set("Authorization", `Bearer ${token}`);
@@ -67,6 +68,7 @@ export type User = {
   id: string;
   email: string;
   display_name: string;
+  locale?: "en" | "ar";
   created_at: string;
   plan_tier: Tier;
   plan_status: string;
@@ -153,7 +155,7 @@ export async function createStory(payload: { title?: string; genre?: string; pal
 export async function getStory(id: string) {
   return (await request<{ story: any }>(`/v1/stories/${id}`)).story;
 }
-export async function updateStory(id: string, patch: { title?: string; genre?: string; palette_idx?: number; cover_image_url?: string | null }) {
+export async function updateStory(id: string, patch: { title?: string; genre?: string; language?: "en" | "ar"; palette_idx?: number; cover_image_url?: string | null }) {
   return (await request<{ story: any }>(`/v1/stories/${id}`, { method: "PATCH", body: JSON.stringify(patch) })).story;
 }
 export async function deleteStory(id: string) {
@@ -576,7 +578,7 @@ export function exportPdfUrl(storyId: string) { return `${BASE}/v1/export/${stor
 // ── Writer profiles ───────────────────────────────────────────────────────────
 
 export async function getMyProfile() { return request<any>("/v1/u/me"); }
-export async function updateMyProfile(payload: { display_name?: string; bio?: string; avatar_url?: string; profile_public?: boolean }) {
+export async function updateMyProfile(payload: { display_name?: string; locale?: "en" | "ar"; bio?: string; avatar_url?: string; profile_public?: boolean }) {
   return request<any>("/v1/u/me", { method: "PUT", body: JSON.stringify(payload) });
 }
 export async function getPublicProfile(userId: string) { return request<any>(`/v1/u/${userId}`); }

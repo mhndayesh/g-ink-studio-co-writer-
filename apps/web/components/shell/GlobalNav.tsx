@@ -9,7 +9,9 @@ import { useIsAuthed, signOut } from "@/lib/auth";
 import { useEntitlement } from "@/lib/useEntitlement";
 import * as api from "@/lib/api";
 import ThemeSwitcher from "@/components/shell/ThemeSwitcher";
+import LanguageSwitcher from "@/components/shell/LanguageSwitcher";
 import { useMediaQuery } from "@/lib/useMediaQuery";
+import { useI18n } from "@/lib/i18n";
 
 /** Logical PARENT route for the back button — navigates up the app's structure
  *  (not browser history), so bouncing between two pages can't create a back loop. */
@@ -29,6 +31,7 @@ export default function GlobalNav() {
   // On narrow phones, drop the wordmark and tighten spacing so the bar fits.
   const compact = useMediaQuery("(max-width: 560px)");
   const authed = useIsAuthed();
+  const { t, isRTL } = useI18n();
 
   // Resolve the current user once signed in — used for the profile link (/u/:id).
   const { data: meData } = useQuery({
@@ -78,13 +81,13 @@ export default function GlobalNav() {
         {compact && !isHub && (
           <button
             onClick={() => router.push(parentPath(pathname))}
-            aria-label="Back"
+            aria-label={t("nav.back")}
             style={{
               background: "none", border: "none", color: "var(--text)", cursor: "pointer",
-              display: "flex", alignItems: "center", padding: 4, marginLeft: -4, flexShrink: 0,
+              display: "flex", alignItems: "center", padding: 4, marginInlineStart: -4, flexShrink: 0,
             }}
           >
-            <ChevronLeft size={22} strokeWidth={2} />
+            {isRTL ? <ChevronRight size={22} strokeWidth={2} /> : <ChevronLeft size={22} strokeWidth={2} />}
           </button>
         )}
 
@@ -107,13 +110,13 @@ export default function GlobalNav() {
           display: "flex", alignItems: "center", gap: 2,
           minWidth: 0, flexShrink: 1, overflowX: "auto", scrollbarWidth: "none",
         }}>
-          <NavLink href="/"        active={isHub}>Hub</NavLink>
-          <NavLink href="/pricing" active={isPricing}>Pricing</NavLink>
+          <NavLink href="/"        active={isHub}>{t("nav.hub")}</NavLink>
+          <NavLink href="/pricing" active={isPricing}>{t("nav.pricing")}</NavLink>
           {authed ? (
             <>
-              <NavLink href="/library" active={pathname.startsWith("/library")}>Library</NavLink>
-              <NavLink href="/inbox" active={isInbox}>Inbox</NavLink>
-              {myUserId && <NavLink href={`/u/${myUserId}`} active={pathname.startsWith("/u/")}>Profile</NavLink>}
+              <NavLink href="/library" active={pathname.startsWith("/library")}>{t("nav.library")}</NavLink>
+              <NavLink href="/inbox" active={isInbox}>{t("nav.inbox")}</NavLink>
+              {myUserId && <NavLink href={`/u/${myUserId}`} active={pathname.startsWith("/u/")}>{t("nav.profile")}</NavLink>}
               {isRealOwner && (
                 <NavLink href="/admin" active={pathname.startsWith("/admin")}>
                   ⚙ Admin
@@ -121,25 +124,26 @@ export default function GlobalNav() {
               )}
             </>
           ) : (
-            <NavLink href="/signup" active={false}>For writers</NavLink>
+            <NavLink href="/signup" active={false}>{t("nav.forWriters")}</NavLink>
           )}
         </nav>
 
         <div style={{ flex: 1 }} />
 
-        {/* Right: switcher + auth */}
+        {/* Right: language, theme, auth */}
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <LanguageSwitcher />
           <ThemeSwitcher />
 
           {authed && (
-            <Link href="/library" aria-label="Notifications" style={{
+            <Link href="/library" aria-label={t("common.notifications")} style={{
               position: "relative", display: "inline-flex", alignItems: "center",
               padding: 7, borderRadius: 8, color: "var(--muted)", textDecoration: "none",
             }}>
               <Bell size={18} />
               {unread > 0 && (
                 <span style={{
-                  position: "absolute", top: 2, right: 2, minWidth: 15, height: 15,
+                  position: "absolute", top: 2, insetInlineEnd: 2, minWidth: 15, height: 15,
                   padding: "0 3px", borderRadius: 8, background: "var(--accent)",
                   color: "var(--accent-text)", fontSize: 9, fontWeight: 700,
                   display: "grid", placeItems: "center", lineHeight: 1,
@@ -162,12 +166,12 @@ export default function GlobalNav() {
                 onMouseEnter={e => (e.currentTarget.style.filter = "brightness(1.07)")}
                 onMouseLeave={e => (e.currentTarget.style.filter = "none")}
               >
-                My Studio <ChevronRight size={13} strokeWidth={2.5} />
+                {t("nav.myStudio")} <ChevronRight size={13} strokeWidth={2.5} className="rtl-flip" />
               </Link>
               <button
                 onClick={handleSignOut}
-                aria-label="Sign out"
-                title="Sign out"
+                aria-label={t("nav.signOut")}
+                title={t("nav.signOut")}
                 style={{
                   display: "inline-flex", alignItems: "center", justifyContent: "center",
                   width: 34, height: 34, borderRadius: 8, cursor: "pointer",
@@ -187,7 +191,7 @@ export default function GlobalNav() {
                 fontFamily: "var(--font-sans)", fontSize: 13, fontWeight: 500,
                 color: "var(--muted)", transition: "color 0.15s",
               }}>
-                Sign in
+                {t("nav.signIn")}
               </Link>
               <Link href="/signup" style={{
                 display: "inline-flex", alignItems: "center",
@@ -199,7 +203,7 @@ export default function GlobalNav() {
                 onMouseEnter={e => (e.currentTarget.style.filter = "brightness(1.07)")}
                 onMouseLeave={e => (e.currentTarget.style.filter = "none")}
               >
-                Get started
+                {t("nav.getStarted")}
               </Link>
             </>
           )}

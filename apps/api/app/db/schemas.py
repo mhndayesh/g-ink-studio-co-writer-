@@ -6,6 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator, model_validator
 
+from app.core.i18n import Locale
+
 
 class APIResponse(BaseModel):
     ok: bool
@@ -25,6 +27,7 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=6)
     display_name: str = Field(default="", max_length=120)
+    locale: Locale = "en"
 
     _norm_email = field_validator("email")(_normalize_email)
 
@@ -47,6 +50,7 @@ class UserOut(BaseModel):
     id: str
     email: EmailStr
     display_name: str
+    locale: Locale = "en"
     created_at: datetime
     plan_tier: str = "free"
     plan_status: str = "none"
@@ -99,12 +103,14 @@ def _validate_cover_url(v: str | None) -> str | None:
 class StoryCreate(BaseModel):
     title: str = "Untitled"
     genre: str = ""
+    language: Locale = "en"
     palette_idx: int = 0
 
 
 class StoryUpdate(BaseModel):
     title: str | None = None
     genre: str | None = None
+    language: Locale | None = None
     palette_idx: int | None = None
     cover_image_url: str | None = None
 
@@ -122,6 +128,7 @@ class StoryOut(BaseModel):
     id: str
     title: str
     genre: str
+    language: Locale = "en"
     palette_idx: int
     cover_image_url: str | None = None
     graph_status: str

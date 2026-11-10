@@ -45,6 +45,9 @@ class User(Base):
     # predate local password auth; login rejects accounts with no hash set.
     password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
     display_name: Mapped[str] = mapped_column(String(120), default="")
+    # UI language ("en" | "ar"). Story language is stored separately on Story so
+    # an author can use an English interface for an Arabic novel (and vice versa).
+    locale: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # Subscription / entitlement — denormalized cache for fast per-request checks.
@@ -215,6 +218,9 @@ class Story(Base):
     user_id: Mapped[str] = mapped_column(String(32), ForeignKey("users.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(255), default="Untitled")
     genre: Mapped[str] = mapped_column(String(120), default="")
+    # Language of the prose and every AI result for this story ("en" | "ar").
+    # Existing rows migrate as English; content is never auto-translated.
+    language: Mapped[str] = mapped_column(String(5), default="en", server_default="en")
     palette_idx: Mapped[int] = mapped_column(Integer, default=0)
     cover_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # uploaded path or http(s) URL
     graph_status: Mapped[str] = mapped_column(String(32), default="unknown")  # unknown|ok|unavailable

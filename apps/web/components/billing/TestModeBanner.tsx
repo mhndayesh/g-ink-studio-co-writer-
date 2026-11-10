@@ -3,13 +3,31 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Drama, X } from "lucide-react";
 import * as api from "@/lib/api";
 import { useEntitlement } from "@/lib/useEntitlement";
+import { useI18n } from "@/lib/i18n";
 
-const LABEL: Record<string, string> = { free: "Free", dev_ai: "Paid", byok: "BYOK", owner: "Owner" };
+const COPY = {
+  en: {
+    labels: { free: "Free", dev_ai: "Paid", byok: "BYOK", owner: "Owner" } as Record<string, string>,
+    testModePre: "Test mode — viewing the app as",
+    testModePost: ".",
+    exiting: "Exiting…",
+    exit: "Exit test mode",
+  },
+  ar: {
+    labels: { free: "مجاني", dev_ai: "مدفوع", byok: "BYOK", owner: "المالك" } as Record<string, string>,
+    testModePre: "وضع الاختبار — تعرض التطبيق بصفة",
+    testModePost: ".",
+    exiting: "جارٍ الخروج…",
+    exit: "إنهاء وضع الاختبار",
+  },
+} as const;
 
 /** Persistent banner shown only while the owner is shape-shifted into another tier.
  *  Mounted app-wide (in Providers) so it follows the owner across every page. */
 export function TestModeBanner() {
   const qc = useQueryClient();
+  const { locale } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
   const { isRealOwner, actingAs } = useEntitlement();
 
   const exit = useMutation({
@@ -30,14 +48,14 @@ export function TestModeBanner() {
     <div className="w-full flex items-center justify-center gap-3 bg-ink-gold/15 border-b border-ink-gold/40 px-4 py-1.5 text-xs text-ink-text">
       <Drama size={13} className="text-ink-gold" />
       <span>
-        Test mode — viewing the app as <strong>{LABEL[actingAs] ?? actingAs}</strong>.
+        {c.testModePre} <strong>{c.labels[actingAs] ?? actingAs}</strong>{c.testModePost}
       </span>
       <button
         onClick={() => exit.mutate()}
         disabled={exit.isPending}
         className="inline-flex items-center gap-1 rounded border border-ink-gold/50 px-2 py-0.5 font-medium text-ink-gold hover:bg-ink-gold/10"
       >
-        <X size={11} /> {exit.isPending ? "Exiting…" : "Exit test mode"}
+        <X size={11} /> {exit.isPending ? c.exiting : c.exit}
       </button>
     </div>
   );

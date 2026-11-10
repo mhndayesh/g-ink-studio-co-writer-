@@ -4,19 +4,40 @@ import { Drama } from "lucide-react";
 import * as api from "@/lib/api";
 import { useEntitlement } from "@/lib/useEntitlement";
 import { Btn } from "@/components/ui/Primitives";
+import { useI18n } from "@/lib/i18n";
 
 // The tiers an owner can "become" to test the real per-tier experience.
-const OPTIONS: { value: api.Tier; label: string }[] = [
-  { value: "owner", label: "Owner (you)" },
-  { value: "free", label: "Free" },
-  { value: "dev_ai", label: "Paid" },
-  { value: "byok", label: "BYOK" },
-];
+const OPTION_VALUES: api.Tier[] = ["owner", "free", "dev_ai", "byok"];
+
+const COPY = {
+  en: {
+    viewAs: "View the app as:",
+    note: "Test mode is real: it changes your AI routing, limits and screens until you switch back to Owner. While viewing as Paid, your AI runs count toward that plan's limit (so you can watch it kick in).",
+    labels: {
+      owner: "Owner (you)",
+      free: "Free",
+      dev_ai: "Paid",
+      byok: "BYOK",
+    } as Record<string, string>,
+  },
+  ar: {
+    viewAs: "اعرض التطبيق بصفة:",
+    note: "وضع الاختبار حقيقي: يغيّر توجيه الذكاء الاصطناعي وحدوده وشاشاته حتى تعود إلى صفة المالك. وأثناء العرض بصفة مدفوع، تُحتسب تشغيلات الذكاء الاصطناعي ضمن حدّ تلك الخطة (حتى ترى الحدّ يعمل).",
+    labels: {
+      owner: "المالك (أنت)",
+      free: "مجاني",
+      dev_ai: "مدفوع",
+      byok: "BYOK",
+    } as Record<string, string>,
+  },
+} as const;
 
 /** Owner-only: flip your effective tier to test how each user type experiences the
  *  app. Persistent — it sticks until you switch back. Renders nothing for non-owners. */
 export function ActAsControl() {
   const qc = useQueryClient();
+  const { locale } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
   const { isRealOwner, actingAs } = useEntitlement();
 
   const set = useMutation({
@@ -36,24 +57,21 @@ export function ActAsControl() {
     <div className="space-y-2">
       <div className="flex items-center gap-2 text-sm text-ink-text2">
         <Drama size={15} className="text-ink-gold" />
-        <span>View the app as:</span>
+        <span>{c.viewAs}</span>
       </div>
       <div className="flex flex-wrap gap-2">
-        {OPTIONS.map((o) => (
+        {OPTION_VALUES.map((value) => (
           <Btn
-            key={o.value}
-            variant={current === o.value ? "primary" : "ghost"}
-            onClick={() => set.mutate(o.value)}
+            key={value}
+            variant={current === value ? "primary" : "ghost"}
+            onClick={() => set.mutate(value)}
             disabled={set.isPending}
           >
-            {o.label}
+            {c.labels[value] ?? value}
           </Btn>
         ))}
       </div>
-      <p className="text-xs text-ink-text3">
-        Test mode is real: it changes your AI routing, limits and screens until you switch back to Owner.
-        While viewing as Paid, your AI runs count toward that plan&apos;s limit (so you can watch it kick in).
-      </p>
+      <p className="text-xs text-ink-text3">{c.note}</p>
     </div>
   );
 }

@@ -9,7 +9,7 @@ from app.core import idempotency
 from app.core.deps import CurrentUser, DB, get_user_story
 from app.core.errors import envelope_ok
 from app.core.ratelimit import limiter
-from app.core.prompt_safety import SECURITY_CLAUSE, fence
+from app.core.prompt_safety import fence, security_clause
 from app.db.models import FlowDraft
 from app.db.schemas import (
     CompanionRequest,
@@ -22,6 +22,8 @@ from app.db.schemas import (
 )
 from app.services import flow_service, llm_service
 from app.services.context_builder import build_story_context
+from app.services.prompts_ar import localized_prompt
+from app.services.story_language import get_story_language
 
 router = APIRouter()
 
@@ -171,8 +173,11 @@ async def writing_companion(request: Request, story_id: str, payload: CompanionR
 
     ctx = await build_story_context(db, story_id, extra_graph_block=graph_block)
     user_msg = f"{fence('story_context', ctx)}\n\nAUTHOR INSTRUCTION:\n{payload.instruction}"
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="flow.companion", system=COMPANION_SYSTEM + "\n\n" + SECURITY_CLAUSE, user_msg=user_msg,
+        db, user, page="flow.companion",
+        system=localized_prompt("flow.companion", lang, COMPANION_SYSTEM) + "\n\n" + security_clause(lang),
+        user_msg=user_msg,
         temperature=0.8, max_tokens=32000, story_id=story_id,
     )
     await db.commit()
@@ -203,8 +208,11 @@ async def writing_companion_stream(request: Request, story_id: str, payload: Com
 
     # authorize_ai + provider resolution happen here (request session alive); a
     # gate failure raises an AppError → proper 402/429 BEFORE the stream opens.
+    lang = await get_story_language(db, story_id)
     chunks = await llm_service.open_stream(
-        db, user, page="flow.companion", system=COMPANION_SYSTEM + "\n\n" + SECURITY_CLAUSE, user_msg=user_msg,
+        db, user, page="flow.companion",
+        system=localized_prompt("flow.companion", lang, COMPANION_SYSTEM) + "\n\n" + security_clause(lang),
+        user_msg=user_msg,
         temperature=0.8, max_tokens=32000, story_id=story_id,
     )
 

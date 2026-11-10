@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import NotFound
-from app.core.prompt_safety import SECURITY_CLAUSE, fence
+from app.core.prompt_safety import fence, security_clause
 from app.db.models import (
     Chapter,
     Character,
@@ -37,6 +37,8 @@ from app.db.models import (
 )
 from app.services import llm_service
 from app.services.context_builder import build_story_context
+from app.services.prompts_ar import localized_prompt
+from app.services.story_language import get_story_language
 
 # Keep version history bounded per (character, kind) — same spirit as the
 # _MAX_*_CTX caps in context_builder. Snapshots are the changed layer only.
@@ -484,8 +486,10 @@ async def analyze_writing(
     q_block = "\n".join(f'- {q["id"]} [{q["layer"]}]: {q["text"]}' for q in questions)
     user_msg += "\n\nQUESTIONS TO ANSWER (use the exact question_id; skip any with no evidence):\n" + q_block
 
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="voice.analyze", system=ANALYZE_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="voice.analyze",
+        system=localized_prompt("voice.analyze", lang, ANALYZE_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg, json_mode=True, temperature=0.2, max_tokens=32000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text) or {}
@@ -581,8 +585,10 @@ async def synthesize_from_interview(
         "INTERVIEW ANSWERS (tagged by layer):\n"
         f"{fence('author_text', answer_lines)}"
     )
+    lang = await get_story_language(db, story_id)
     resp, fb = await llm_service.run(
-        db, user, page="voice.interview", system=INTERVIEW_SYNTH_SYSTEM + "\n\n" + SECURITY_CLAUSE,
+        db, user, page="voice.interview",
+        system=localized_prompt("voice.interview", lang, INTERVIEW_SYNTH_SYSTEM) + "\n\n" + security_clause(lang),
         user_msg=user_msg, json_mode=True, temperature=0.4, max_tokens=32000, story_id=story_id,
     )
     parsed = llm_service.parse_json(resp.text) or {}

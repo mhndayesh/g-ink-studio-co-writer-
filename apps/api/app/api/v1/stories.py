@@ -42,6 +42,7 @@ async def create_story(payload: StoryCreate, user: CurrentUser, db: DB):
         user_id=user.id,
         title=payload.title or "Untitled",
         genre=payload.genre,
+        language=payload.language,
         palette_idx=payload.palette_idx,
     )
     db.add(story)
@@ -62,6 +63,8 @@ async def get_story(story_id: str, user: CurrentUser, db: DB):
 async def update_story(story_id: str, payload: StoryUpdate, user: CurrentUser, db: DB):
     story = await get_user_story(story_id, user, db)
     for field, value in payload.model_dump(exclude_unset=True).items():
+        if field == "language" and value is None:
+            continue
         setattr(story, field, value)
     await db.commit()
     await db.refresh(story)

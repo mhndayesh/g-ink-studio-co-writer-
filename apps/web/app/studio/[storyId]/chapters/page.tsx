@@ -9,11 +9,87 @@ import { CoverUploader } from "@/components/ui/CoverUploader";
 import { useDebouncedSave } from "@/lib/debounce";
 import { AiLockNotice } from "@/components/billing/AiLockNotice";
 import { useEntitlement } from "@/lib/useEntitlement";
+import { useI18n } from "@/lib/i18n";
+
+const COPY = {
+  en: {
+    title: "❧ Chapters",
+    newChapter: "New chapter",
+    defaultTitle: "New chapter",
+    yourChapters: "your chapters",
+    selectChapter: "Select a chapter on the left, or create one.",
+    chapterTitle: "Chapter {n}",
+    autosave: "Autosaves as you type.",
+    deleteConfirm: "Delete this chapter?",
+    pov: "POV",
+    location: "Location",
+    summary: "Summary",
+    noneOption: "— none —",
+    chapterCover: "Chapter cover (optional)",
+    manuscript: "Manuscript",
+    sceneStrip: "Scene Strip",
+    untitledScene: "Untitled scene",
+    povTag: "POV: {name}",
+    goal: "Goal",
+    conflict: "Conflict",
+    outcome: "Outcome",
+    writingCompanion: "Writing Companion",
+    companionHint: "Describe a scene — the AI drafts it using the full story context (Graph-RAG).",
+    instructionPlaceholder:
+      "e.g. The reunion in the throne room, Mira confronts Aiden about the broken pact.",
+    stop: "Stop",
+    draftScene: "Draft scene",
+    draft: "Draft",
+    streaming: "Streaming…",
+    discard: "Discard",
+    insertIntoChapter: "Insert into chapter",
+    draftFailedFallback: "The draft failed to generate.",
+    draftErrorSuffix: "— please try again.",
+    emptyResult:
+      "The model returned nothing. Try rephrasing your instruction, or check your AI model in Settings.",
+  },
+  ar: {
+    title: "❧ الفصول",
+    newChapter: "فصل جديد",
+    defaultTitle: "فصل جديد",
+    yourChapters: "فصولك",
+    selectChapter: "اختر فصلًا من القائمة، أو أنشئ فصلًا جديدًا.",
+    chapterTitle: "الفصل {n}",
+    autosave: "يُحفظ تلقائيًا أثناء الكتابة.",
+    deleteConfirm: "هل تريد حذف هذا الفصل؟",
+    pov: "وجهة النظر",
+    location: "المكان",
+    summary: "الملخص",
+    noneOption: "— لا شيء —",
+    chapterCover: "غلاف الفصل (اختياري)",
+    manuscript: "المخطوطة",
+    sceneStrip: "شريط المشاهد",
+    untitledScene: "مشهد بلا عنوان",
+    povTag: "وجهة النظر: {name}",
+    goal: "الهدف",
+    conflict: "الصراع",
+    outcome: "النتيجة",
+    writingCompanion: "رفيق الكتابة",
+    companionHint: "صِف مشهدًا، وسيكتبه الذكاء الاصطناعي مستعينًا بسياق القصة الكامل (Graph-RAG).",
+    instructionPlaceholder: "مثال: اللقاء في قاعة العرش، حيث تواجه ميرا أيدن بشأن الميثاق المكسور.",
+    stop: "إيقاف",
+    draftScene: "صياغة مشهد",
+    draft: "المسودة",
+    streaming: "جارٍ التوليد…",
+    discard: "تجاهل",
+    insertIntoChapter: "إدراج في الفصل",
+    draftFailedFallback: "تعذّر توليد المسودة.",
+    draftErrorSuffix: "— حاول مرة أخرى.",
+    emptyResult: "لم يُرجع النموذج أي نص. أعد صياغة تعليماتك، أو تحقّق من نموذج الذكاء الاصطناعي في الإعدادات.",
+  },
+} as const;
 
 export default function ChaptersPage() {
   const { storyId } = useParams<{ storyId: string }>();
   const qc = useQueryClient();
   const { aiAvailable } = useEntitlement();
+  const { t, locale, formatNumber } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
 
   const { data: chapters, isError: chaptersError, error: chaptersErr, refetch: refetchChapters } = useQuery({ queryKey: ["chapters", storyId], queryFn: () => api.listChapters(storyId) });
   const { data: characters } = useQuery({ queryKey: ["characters", storyId], queryFn: () => api.listCharacters(storyId) });
@@ -36,7 +112,7 @@ export default function ChaptersPage() {
   const locById = useMemo(() => Object.fromEntries((locations || []).map((l: any) => [l.id, l])), [locations]);
 
   const create = useMutation({
-    mutationFn: () => api.createChapter(storyId, { title: "New chapter", content: "" }),
+    mutationFn: () => api.createChapter(storyId, { title: c.defaultTitle, content: "" }),
     onSuccess: (c) => { qc.invalidateQueries({ queryKey: ["chapters", storyId] }); setActiveId(c.id); },
   });
 
@@ -137,17 +213,17 @@ export default function ChaptersPage() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-4 lg:gap-6 max-w-7xl">
       <aside>
-        <PageHdr title="❧ Chapters" />
-        <Btn variant="primary" className="w-full mb-3" onClick={() => create.mutate()}><Plus size={14}/> New chapter</Btn>
-        {chaptersError && <div className="mb-3"><QueryError error={chaptersErr} retry={refetchChapters} what="your chapters" /></div>}
+        <PageHdr title={c.title} />
+        <Btn variant="primary" className="w-full mb-3" onClick={() => create.mutate()}><Plus size={14}/> {c.newChapter}</Btn>
+        {chaptersError && <div className="mb-3"><QueryError error={chaptersErr} retry={refetchChapters} what={c.yourChapters} /></div>}
         <ul className="space-y-1">
-          {(chapters || []).map((c: any) => (
-            <li key={c.id}>
+          {(chapters || []).map((chapter: any) => (
+            <li key={chapter.id}>
               <button
-                onClick={() => setActiveId(c.id)}
-                className={`w-full text-left px-3 py-2 rounded text-sm ${activeId === c.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}
+                onClick={() => setActiveId(chapter.id)}
+                className={`w-full text-start px-3 py-2 rounded text-sm ${activeId === chapter.id ? "bg-ink-gold/10 text-ink-goldLight border border-ink-gold/30" : "text-ink-text2 hover:text-ink-text hover:bg-ink-surface2"}`}
               >
-                <span className="text-ink-text3 mr-1">{c.number}.</span> {c.title || "Untitled"}
+                <span className="text-ink-text3 me-1">{formatNumber(chapter.number)}.</span> {chapter.title || t("common.untitled")}
               </button>
             </li>
           ))}
@@ -155,41 +231,41 @@ export default function ChaptersPage() {
       </aside>
 
       <section>
-        {!active && <p className="text-ink-text2">Select a chapter on the left, or create one.</p>}
+        {!active && <p className="text-ink-text2">{c.selectChapter}</p>}
         {active && draft && (
           <>
             <PageHdr
-              title={`Chapter ${draft.number}`}
-              subtitle="Autosaves as you type."
+              title={c.chapterTitle.replace("{n}", formatNumber(draft.number))}
+              subtitle={c.autosave}
               right={
-                <Btn variant="ghost" onClick={() => { if (confirm("Delete this chapter?")) del.mutate(); }}>
-                  <Trash2 size={14}/> Delete
+                <Btn variant="ghost" onClick={() => { if (confirm(c.deleteConfirm)) del.mutate(); }}>
+                  <Trash2 size={14}/> {t("common.delete")}
                 </Btn>
               }
             />
 
             <Card className="mb-4">
               <div className="grid gap-3 md:grid-cols-2">
-                <FG label="Title"><Inp value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></FG>
-                <FG label="POV">
+                <FG label={t("studio.title")}><Inp value={draft.title} onChange={e => setDraft({ ...draft, title: e.target.value })} /></FG>
+                <FG label={c.pov}>
                   <select className="input" value={draft.pov_character_id || ""} onChange={e => setDraft({ ...draft, pov_character_id: e.target.value || null })}>
-                    <option value="">— none —</option>
-                    {(characters || []).map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    <option value="">{c.noneOption}</option>
+                    {(characters || []).map((character: any) => <option key={character.id} value={character.id}>{character.name}</option>)}
                   </select>
                 </FG>
-                <FG label="Location">
+                <FG label={c.location}>
                   <select className="input" value={draft.location_id || ""} onChange={e => setDraft({ ...draft, location_id: e.target.value || null })}>
-                    <option value="">— none —</option>
-                    {(locations || []).map((l: any) => <option key={l.id} value={l.id}>{l.name}</option>)}
+                    <option value="">{c.noneOption}</option>
+                    {(locations || []).map((location: any) => <option key={location.id} value={location.id}>{location.name}</option>)}
                   </select>
                 </FG>
-                <FG label="Summary"><Inp value={draft.summary || ""} onChange={e => setDraft({ ...draft, summary: e.target.value })} /></FG>
+                <FG label={c.summary}><Inp value={draft.summary || ""} onChange={e => setDraft({ ...draft, summary: e.target.value })} /></FG>
               </div>
               <div className="mt-3 border-t border-ink-border pt-3">
                 <CoverUploader
                   value={draft.cover_image_url}
                   onChange={(url) => setDraft({ ...draft, cover_image_url: url })}
-                  label="Chapter cover (optional)"
+                  label={c.chapterCover}
                   aspect="16 / 9"
                   width={120}
                 />
@@ -197,30 +273,30 @@ export default function ChaptersPage() {
             </Card>
 
             <Card className="mb-4">
-              <FG label="Manuscript">
+              <FG label={c.manuscript}>
                 <Ta rows={20} value={draft.content || ""} onChange={e => setDraft({ ...draft, content: e.target.value })} className="leading-relaxed text-base" />
               </FG>
             </Card>
 
             {activeScenes.length > 0 && (
               <Card className="mb-4">
-                <h3 className="font-display text-lg mb-3">Scene Strip</h3>
+                <h3 className="font-display text-lg mb-3">{c.sceneStrip}</h3>
                 <div className="grid gap-2 md:grid-cols-2">
                   {activeScenes.map((s: any) => (
                     <div key={s.id} className="rounded border border-ink-border bg-ink-surface2/60 p-3">
                       <div className="flex flex-wrap items-center gap-2 mb-1">
-                        <Tag color="muted">{s.ordinal || 0}</Tag>
-                        <strong>{s.title || s.beat || "Untitled scene"}</strong>
+                        <Tag color="muted">{formatNumber(s.ordinal || 0)}</Tag>
+                        <strong>{s.title || s.beat || c.untitledScene}</strong>
                       </div>
                       {s.summary && <p className="text-sm text-ink-text2 mb-2">{s.summary}</p>}
                       <div className="flex flex-wrap gap-1">
-                        {s.pov_character_id && charById[s.pov_character_id] && <Tag color="gold">POV: {charById[s.pov_character_id].name}</Tag>}
+                        {s.pov_character_id && charById[s.pov_character_id] && <Tag color="gold">{c.povTag.replace("{name}", charById[s.pov_character_id].name)}</Tag>}
                         {s.location_id && locById[s.location_id] && <Tag color="rose">{locById[s.location_id].name}</Tag>}
                         {(s.plot_thread_ids || []).map((tid: string) => threadById[tid] && <Tag key={tid} color="green">{threadById[tid].name}</Tag>)}
                       </div>
                       {(s.goal || s.conflict || s.outcome) && (
                         <p className="text-xs text-ink-text3 mt-2">
-                          {[s.goal && `Goal: ${s.goal}`, s.conflict && `Conflict: ${s.conflict}`, s.outcome && `Outcome: ${s.outcome}`].filter(Boolean).join(" · ")}
+                          {[s.goal && `${c.goal}: ${s.goal}`, s.conflict && `${c.conflict}: ${s.conflict}`, s.outcome && `${c.outcome}: ${s.outcome}`].filter(Boolean).join(" · ")}
                         </p>
                       )}
                     </div>
@@ -230,20 +306,20 @@ export default function ChaptersPage() {
             )}
 
             <Card>
-              <h3 className="font-display text-lg mb-2">Writing Companion</h3>
-              <p className="text-sm text-ink-text2 mb-3">Describe a scene — the AI drafts it using the full story context (Graph-RAG).</p>
+              <h3 className="font-display text-lg mb-2">{c.writingCompanion}</h3>
+              <p className="text-sm text-ink-text2 mb-3">{c.companionHint}</p>
               <AiLockNotice />
               <Ta
                 rows={3}
                 value={instruction}
                 onChange={e => setInstruction(e.target.value)}
-                placeholder="e.g. The reunion in the throne room, Mira confronts Aiden about the broken pact."
+                placeholder={c.instructionPlaceholder}
                 disabled={isStreaming}
               />
               <div className="flex justify-end mt-2 gap-2">
                 {isStreaming ? (
                   <Btn variant="ghost" onClick={stopStream}>
-                    <StopCircle size={14}/> Stop
+                    <StopCircle size={14}/> {c.stop}
                   </Btn>
                 ) : (
                   <Btn
@@ -251,7 +327,7 @@ export default function ChaptersPage() {
                     disabled={!instruction.trim() || !aiAvailable}
                     onClick={() => companion.mutate(instruction)}
                   >
-                    <Sparkles size={14}/> Draft scene
+                    <Sparkles size={14}/> {c.draftScene}
                   </Btn>
                 )}
               </div>
@@ -260,20 +336,20 @@ export default function ChaptersPage() {
               {displayText && (
                 <div className="mt-4 border-t border-ink-border pt-4">
                   <div className="flex items-center gap-2 mb-2">
-                    <p className="text-xs uppercase tracking-wider text-ink-text2">Draft</p>
+                    <p className="text-xs uppercase tracking-wider text-ink-text2">{c.draft}</p>
                     {isStreaming && (
                       <span className="text-xs text-ink-text3 flex items-center gap-1">
                         <span className="inline-block w-1.5 h-3.5 bg-ink-gold/70 rounded-sm animate-pulse" />
-                        Streaming…
+                        {c.streaming}
                       </span>
                     )}
                   </div>
                   <pre className="whitespace-pre-wrap leading-relaxed text-sm text-ink-text">{displayText}</pre>
                   {!isStreaming && (
                     <div className="flex justify-end gap-2 mt-3">
-                      <Btn variant="ghost" onClick={resetCompanion}>Discard</Btn>
+                      <Btn variant="ghost" onClick={resetCompanion}>{c.discard}</Btn>
                       <Btn variant="primary" onClick={() => { insertDraftAtEnd(displayText); resetCompanion(); }}>
-                        Insert into chapter
+                        {c.insertIntoChapter}
                       </Btn>
                     </div>
                   )}
@@ -284,12 +360,12 @@ export default function ChaptersPage() {
                   otherwise looks identical to "I never clicked Draft". */}
               {!isStreaming && companion.isError && (
                 <p className="mt-3 text-sm text-ink-red">
-                  {companion.error instanceof Error ? companion.error.message : "The draft failed to generate."} — please try again.
+                  {companion.error instanceof Error ? companion.error.message : c.draftFailedFallback} {c.draftErrorSuffix}
                 </p>
               )}
               {!isStreaming && companion.isSuccess && !displayText && (
                 <p className="mt-3 text-sm text-ink-text3">
-                  The model returned nothing. Try rephrasing your instruction, or check your AI model in Settings.
+                  {c.emptyResult}
                 </p>
               )}
             </Card>

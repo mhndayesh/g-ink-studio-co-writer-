@@ -9,7 +9,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text
 
 from app.core.config import get_settings
+from app.core.error_messages_ar import localize_error
 from app.core.errors import AppError, envelope_err
+from app.core.i18n import locale_from_accept_language
 
 # ---------------------------------------------------------------------------
 # Structured JSON logging
@@ -109,8 +111,13 @@ def create_app() -> FastAPI:
     app.add_middleware(RequestSizeLimitMiddleware, max_bytes=s.max_request_body_mb * 1024 * 1024)
 
     @app.exception_handler(RequestBodyTooLarge)
-    async def body_too_large_handler(_req: Request, _exc: RequestBodyTooLarge):
-        return envelope_err("payload_too_large", "Request body exceeds size limit", status_code=413)
+    async def body_too_large_handler(req: Request, _exc: RequestBodyTooLarge):
+        lang = locale_from_accept_language(req.headers.get("accept-language"))
+        return envelope_err(
+            "payload_too_large",
+            localize_error("Request body exceeds size limit", lang),
+            status_code=413,
+        )
 
     # ── Rate limiting ────────────────────────────────────────────────────────
     # The shared limiter (app/core/ratelimit.py) is imported here AND by route
@@ -139,8 +146,28 @@ def create_app() -> FastAPI:
 
     # ── Exception handlers ────────────────────────────────────────────────
     @app.exception_handler(AppError)
-    async def app_err_handler(_req: Request, exc: AppError):
-        return envelope_err(exc.code, exc.message, details=exc.details, status_code=exc.status_code)
+    async def app_err_handler(req: Request, exc: AppError):
+        lang = locale_from_accept_language(req.headers.get("accept-language"))
+        return envelope_err(
+            exc.code,
+            localize_error(exc.message, lang),
+            details=exc.details,
+            status_code=exc.status_code,
+        )
+
+    from fastapi.encoders import jsonable_encoder
+    from fastapi.exceptions import RequestValidationError
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(req: Request, exc: RequestValidationError):
+        lang = locale_from_accept_language(req.headers.get("accept-language"))
+        message = "بيانات الطلب غير صالحة." if lang == "ar" else "Request validation failed."
+        return envelope_err(
+            "validation_error",
+            message,
+            details=jsonable_encoder(exc.errors()),
+            status_code=422,
+        )
 
     from sqlalchemy.exc import IntegrityError
     from sqlalchemy.orm.exc import StaleDataError
@@ -168,9 +195,11 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(Exception)
-    async def fallback(_req: Request, exc: Exception):
+    async def fallback(req: Request, exc: Exception):
         log.exception("Unhandled error: %s", exc)
-        return envelope_err("internal_error", "An unexpected error occurred", status_code=500)
+        lang = locale_from_accept_language(req.headers.get("accept-language"))
+        message = "??? ??? ??? ?????." if lang == "ar" else "An unexpected error occurred"
+        return envelope_err("internal_error", message, status_code=500)
 
     # ── Health endpoint ───────────────────────────────────────────────────
     @app.get("/health")

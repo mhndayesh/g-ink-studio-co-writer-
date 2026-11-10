@@ -6,6 +6,82 @@ import Link from "next/link";
 import { useState } from "react";
 import * as api from "@/lib/api";
 import { useIsAuthed } from "@/lib/auth";
+import { useI18n } from "@/lib/i18n";
+
+const COPY = {
+  en: {
+    chaptersShort: "{n} ch.",
+    reads: "{n} reads",
+    profileNotFound: "Profile not found",
+    backToHub: "Back to hub",
+    displayName: "Display name",
+    yourName: "Your name",
+    bio: "Bio",
+    bioLimit: "(max 500 chars)",
+    bioPlaceholder: "A few words about yourself…",
+    publicProfile: "Public profile",
+    publicHint: "— anyone can view your profile page",
+    privateHint: "— only you can see this page",
+    saving: "Saving…",
+    save: "Save",
+    cancel: "Cancel",
+    editProfile: "Edit profile",
+    published: "published",
+    totalReads: "total reads",
+    myStudio: "My Studio",
+    yourPublishedStories: "Your published stories",
+    storiesBy: "Stories by {name}",
+    nothingPublished: "Nothing published yet.",
+    noPublishedStories: "No published stories yet.",
+    goToMyStudio: "Go to My Studio",
+  },
+  ar: {
+    chaptersShort: "الفصول: {n}",
+    reads: "القراءات: {n}",
+    profileNotFound: "الملف الشخصي غير موجود",
+    backToHub: "العودة إلى الرئيسية",
+    displayName: "اسم العرض",
+    yourName: "اسمك",
+    bio: "نبذة",
+    bioLimit: "(بحد أقصى 500 حرف)",
+    bioPlaceholder: "بضع كلمات عنك…",
+    publicProfile: "ملف شخصي عام",
+    publicHint: "— يمكن لأي شخص عرض صفحة ملفك الشخصي",
+    privateHint: "— أنت فقط من يستطيع رؤية هذه الصفحة",
+    saving: "جارٍ الحفظ…",
+    save: "حفظ",
+    cancel: "إلغاء",
+    editProfile: "تعديل الملف الشخصي",
+    published: "منشورة",
+    totalReads: "إجمالي القراءات",
+    myStudio: "استوديوي",
+    yourPublishedStories: "قصصك المنشورة",
+    storiesBy: "قصص {name}",
+    nothingPublished: "لم يُنشر شيء بعد.",
+    noPublishedStories: "لا توجد قصص منشورة بعد.",
+    goToMyStudio: "الانتقال إلى استوديوي",
+  },
+} as const;
+
+const GENRES: Record<string, { en: string; ar: string }> = {
+  fantasy: { en: "Fantasy", ar: "فانتازيا" },
+  "sci-fi": { en: "Sci-Fi", ar: "خيال علمي" },
+  scifi: { en: "Sci-Fi", ar: "خيال علمي" },
+  mystery: { en: "Mystery", ar: "غموض" },
+  thriller: { en: "Thriller", ar: "إثارة" },
+  romance: { en: "Romance", ar: "رومانسية" },
+  historical: { en: "Historical", ar: "تاريخية" },
+  horror: { en: "Horror", ar: "رعب" },
+  literary: { en: "Literary", ar: "أدبية" },
+  adventure: { en: "Adventure", ar: "مغامرة" },
+  other: { en: "Other", ar: "أخرى" },
+};
+
+function genreLabel(value: string, locale: string): string {
+  const hit = GENRES[value.trim().toLowerCase()];
+  if (!hit) return value;
+  return locale === "ar" ? hit.ar : hit.en;
+}
 
 function InitialAvatar({ name, size = 56 }: { name: string; size?: number }) {
   const initials = name.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase() || "?";
@@ -28,6 +104,8 @@ function InitialAvatar({ name, size = 56 }: { name: string; size?: number }) {
 }
 
 function StoryCard({ story, slug }: { story: any; slug: string }) {
+  const { locale, formatNumber } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
   const initials = (story.story_title || "?").split(" ").slice(0, 2).map((w: string) => w[0]).join("").toUpperCase();
 
   return (
@@ -62,7 +140,7 @@ function StoryCard({ story, slug }: { story: any; slug: string }) {
               textTransform: "uppercase", color: "var(--accent)",
               background: "var(--accent-soft)", padding: "2px 7px",
               borderRadius: 4, display: "inline-block", marginBottom: 8,
-            }}>{story.genre}</span>
+            }}>{genreLabel(story.genre, locale)}</span>
           )}
           <h3 style={{
             fontFamily: "var(--font-serif)", fontSize: 17, fontWeight: 500,
@@ -78,10 +156,10 @@ function StoryCard({ story, slug }: { story: any; slug: string }) {
             </p>
           )}
           <div style={{ display: "flex", gap: 12, fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--faint)" }}>
-            <span>{story.total_chapters} ch.</span>
+            <span>{c.chaptersShort.replace("{n}", formatNumber(story.total_chapters ?? 0))}</span>
             <span>·</span>
-            <span>{(story.view_count || 0).toLocaleString()} reads</span>
-            {story.avg_rating && <><span>·</span><span>★ {story.avg_rating.toFixed(1)}</span></>}
+            <span>{c.reads.replace("{n}", formatNumber(story.view_count || 0))}</span>
+            {story.avg_rating && <><span>·</span><span>★ {formatNumber(story.avg_rating, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span></>}
           </div>
         </div>
       </article>
@@ -96,6 +174,9 @@ export default function ProfilePage() {
   const [draft,  setDraft]  = useState({ display_name: "", bio: "", profile_public: true });
 
   const authed = useIsAuthed();
+  const { locale, formatNumber } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
+
   // Resolve the signed-in user to know whether this is my own profile page.
   const { data: myProfile } = useQuery({
     queryKey: ["me", "profile"],
@@ -141,8 +222,10 @@ export default function ProfilePage() {
   if (!profile) {
     return (
       <div style={{ textAlign: "center", padding: "80px 16px", color: "var(--muted)" }}>
-        <p style={{ fontFamily: "var(--font-serif)", fontSize: 24, marginBottom: 8 }}>Profile not found</p>
-        <Link href="/" style={{ color: "var(--accent)", fontWeight: 600 }}>← Back to hub</Link>
+        <p style={{ fontFamily: "var(--font-serif)", fontSize: 24, marginBottom: 8 }}>{c.profileNotFound}</p>
+        <Link href="/" style={{ color: "var(--accent)", fontWeight: 600 }}>
+          <span className="rtl-flip" style={{ display: "inline-block" }}>←</span> {c.backToHub}
+        </Link>
       </div>
     );
   }
@@ -163,23 +246,23 @@ export default function ProfilePage() {
           {editing ? (
             <div style={{ display: "grid", gap: 12 }}>
               <div>
-                <label className="label">Display name</label>
+                <label className="label">{c.displayName}</label>
                 <input
                   className="input"
                   value={draft.display_name}
                   onChange={e => setDraft(d => ({ ...d, display_name: e.target.value }))}
-                  placeholder="Your name"
+                  placeholder={c.yourName}
                 />
               </div>
               <div>
-                <label className="label">Bio <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, fontSize: 10 }}>(max 500 chars)</span></label>
+                <label className="label">{c.bio} <span style={{ fontWeight: 400, textTransform: "none", letterSpacing: 0, fontSize: 10 }}>{c.bioLimit}</span></label>
                 <textarea
                   className="input"
                   rows={3}
                   maxLength={500}
                   value={draft.bio}
                   onChange={e => setDraft(d => ({ ...d, bio: e.target.value }))}
-                  placeholder="A few words about yourself…"
+                  placeholder={c.bioPlaceholder}
                   style={{ resize: "vertical" }}
                 />
               </div>
@@ -190,9 +273,9 @@ export default function ProfilePage() {
                   onChange={e => setDraft(d => ({ ...d, profile_public: e.target.checked }))}
                 />
                 <span>
-                  Public profile
-                  <span style={{ color: "var(--muted)", marginLeft: 6 }}>
-                    {draft.profile_public ? "— anyone can view your profile page" : "— only you can see this page"}
+                  {c.publicProfile}
+                  <span style={{ color: "var(--muted)", marginInlineStart: 6 }}>
+                    {draft.profile_public ? c.publicHint : c.privateHint}
                   </span>
                 </span>
               </label>
@@ -203,14 +286,14 @@ export default function ProfilePage() {
                   className="iw-btn primary"
                   style={{ fontSize: 13, padding: "7px 16px" }}
                 >
-                  {save.isPending ? "Saving…" : "Save"}
+                  {save.isPending ? c.saving : c.save}
                 </button>
                 <button
                   onClick={() => setEditing(false)}
                   className="iw-btn ghost"
                   style={{ fontSize: 13, padding: "7px 16px" }}
                 >
-                  Cancel
+                  {c.cancel}
                 </button>
               </div>
             </div>
@@ -229,13 +312,13 @@ export default function ProfilePage() {
                     className="iw-btn ghost"
                     style={{ fontSize: 12, padding: "4px 10px" }}
                   >
-                    Edit profile
+                    {c.editProfile}
                   </button>
                 )}
               </div>
 
               {profile.bio && (
-                <p style={{ fontSize: 15, color: "var(--muted)", marginTop: 8, lineHeight: 1.6, maxWidth: "52ch" }}>
+                <p dir="auto" style={{ fontSize: 15, color: "var(--muted)", marginTop: 8, lineHeight: 1.6, maxWidth: "52ch" }}>
                   {profile.bio}
                 </p>
               )}
@@ -243,14 +326,14 @@ export default function ProfilePage() {
               {/* Stats row */}
               <div style={{ display: "flex", gap: 20, marginTop: 14 }}>
                 {[
-                  { val: profile.story_count, label: "published" },
-                  { val: (profile.total_reads || 0).toLocaleString(), label: "total reads" },
+                  { val: formatNumber(profile.story_count ?? 0), label: c.published },
+                  { val: formatNumber(profile.total_reads || 0), label: c.totalReads },
                 ].map(s => (
                   <div key={s.label}>
                     <span style={{ fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 600, color: "var(--text)" }}>
                       {s.val}
                     </span>
-                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--faint)", marginLeft: 6 }}>
+                    <span style={{ fontFamily: "var(--font-mono)", fontSize: 11, letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--faint)", marginInlineStart: 6 }}>
                       {s.label}
                     </span>
                   </div>
@@ -260,7 +343,7 @@ export default function ProfilePage() {
               {isMe && (
                 <div style={{ marginTop: 12 }}>
                   <Link href="/studio" className="iw-btn secondary" style={{ fontSize: 12, padding: "5px 12px" }}>
-                    My Studio →
+                    {c.myStudio} <span className="rtl-flip" style={{ display: "inline-block" }}>→</span>
                   </Link>
                 </div>
               )}
@@ -275,7 +358,7 @@ export default function ProfilePage() {
           fontFamily: "var(--font-serif)", fontSize: 20, fontWeight: 500,
           color: "var(--text)", marginBottom: 20,
         }}>
-          {isMe ? "Your published stories" : `Stories by ${profile.display_name}`}
+          {isMe ? c.yourPublishedStories : c.storiesBy.replace("{name}", profile.display_name)}
         </h2>
 
         {!profile.stories?.length ? (
@@ -287,11 +370,11 @@ export default function ProfilePage() {
             borderRadius: "var(--r-lg)",
           }}>
             <p style={{ fontFamily: "var(--font-serif)", fontSize: 17, marginBottom: 8 }}>
-              {isMe ? "Nothing published yet." : "No published stories yet."}
+              {isMe ? c.nothingPublished : c.noPublishedStories}
             </p>
             {isMe && (
               <Link href="/studio" style={{ color: "var(--accent)", fontWeight: 600, fontSize: 14 }}>
-                Go to My Studio →
+                {c.goToMyStudio} <span className="rtl-flip" style={{ display: "inline-block" }}>→</span>
               </Link>
             )}
           </div>

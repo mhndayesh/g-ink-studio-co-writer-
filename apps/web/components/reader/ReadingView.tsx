@@ -12,6 +12,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import Link from "next/link";
 import { request } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 interface ChapterData {
   chapter: {
@@ -70,10 +71,75 @@ const THEMES: Record<Theme, { bg: string; text: string; muted: string; border: s
 
 const FONT_SIZES = [16, 18, 20, 22, 24];
 
+const COPY = {
+  en: {
+    themes: { site: "Site", cream: "Cream", sepia: "Sepia", dark: "Dark" },
+    themeGroup: "Reading theme",
+    decreaseFont: "Decrease font size",
+    increaseFont: "Increase font size",
+    back: "Back",
+    oneMinute: "~1 min",
+    minutes: "~{n} min",
+    chapterOf: "Chapter {n} of {total}",
+    words: "{n} words",
+    addNote: "✎ Add note to writer",
+    privateNoteTitle: "Private note to author",
+    privateNoteHint: "Only the author will see this. It won't be published.",
+    notePlaceholder: "Your thoughts, feedback, or reaction…",
+    cancel: "Cancel",
+    sending: "Sending…",
+    sendNote: "Send note",
+    noteSent: "✓ Note sent to author",
+    previousChapter: "Previous chapter",
+    nextChapter: "Next chapter",
+    endOfStory: "End of story",
+    thankYou: "Thank you for rating!",
+    reviewHint: "You can also leave a written review on the story page.",
+    backToStory: "Back to story page",
+    finishedNamed: "You finished \"{title}\"",
+    finishedGeneric: "You finished this story",
+    byAuthor: "by {author}",
+    rateIt: "How would you rate it?",
+    signInToSave: "Sign in to save your rating",
+    chapterNotFound: "Chapter not found.",
+  },
+  ar: {
+    themes: { site: "الموقع", cream: "كريمي", sepia: "سيبيا", dark: "داكن" },
+    themeGroup: "سمة القراءة",
+    decreaseFont: "تصغير حجم الخط",
+    increaseFont: "تكبير حجم الخط",
+    back: "رجوع",
+    oneMinute: "~دقيقة واحدة",
+    minutes: "~{n} د",
+    chapterOf: "الفصل {n} من {total}",
+    words: "الكلمات: {n}",
+    addNote: "✎ أضف ملاحظة للكاتب",
+    privateNoteTitle: "ملاحظة خاصة للمؤلف",
+    privateNoteHint: "لن يراها إلا المؤلف. ولن تُنشر.",
+    notePlaceholder: "أفكارك أو ملاحظاتك أو انطباعك…",
+    cancel: "إلغاء",
+    sending: "جارٍ الإرسال…",
+    sendNote: "إرسال الملاحظة",
+    noteSent: "✓ أُرسلت الملاحظة إلى المؤلف",
+    previousChapter: "الفصل السابق",
+    nextChapter: "الفصل التالي",
+    endOfStory: "نهاية القصة",
+    thankYou: "شكرًا لتقييمك!",
+    reviewHint: "يمكنك أيضًا كتابة مراجعة على صفحة القصة.",
+    backToStory: "العودة إلى صفحة القصة",
+    finishedNamed: "أتممت «{title}»",
+    finishedGeneric: "أتممت هذه القصة",
+    byAuthor: "بقلم {author}",
+    rateIt: "كيف تقيّمها؟",
+    signInToSave: "سجّل الدخول لحفظ تقييمك",
+    chapterNotFound: "الفصل غير موجود.",
+  },
+} as const;
+
 // Approximate reading time
-function readingMinutes(wordCount: number): string {
+function readingMinutes(wordCount: number, c: typeof COPY.en | typeof COPY.ar, formatNumber: (v: number) => string): string {
   const mins = Math.ceil(wordCount / 250);
-  return mins <= 1 ? "~1 min" : `~${mins} min`;
+  return mins <= 1 ? c.oneMinute : c.minutes.replace("{n}", formatNumber(mins));
 }
 
 function wpmProgress(content: string, scrollPct: number): number {
@@ -89,6 +155,9 @@ export default function ReadingView({
   // the scroll effect it reset to 0 whenever the effect re-ran (e.g. ratingSubmitted
   // flipping), which restarted the 10%-throttle and fired a duplicate progress write.
   const lastSyncPctRef = useRef(0);
+
+  const { locale, formatNumber } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
 
   const [theme, setTheme]         = useState<Theme>("site");
   const [fontSize, setFontSize]   = useState(18);
@@ -217,7 +286,7 @@ export default function ReadingView({
   if (!chapter || error) {
     return (
       <div className="flex items-center justify-center min-h-screen" style={{ background: colors.bg }}>
-        <p style={{ color: colors.muted }}>Chapter not found.</p>
+        <p style={{ color: colors.muted }}>{c.chapterNotFound}</p>
       </div>
     );
   }
@@ -247,7 +316,7 @@ export default function ReadingView({
           className="text-sm transition-opacity hover:opacity-70"
           style={{ color: colors.muted }}
         >
-          ← {displayTitle || "Back"}
+          <span className="rtl-flip inline-block">←</span> {displayTitle || c.back}
         </Link>
 
         <div className="flex items-center gap-1">
@@ -255,6 +324,8 @@ export default function ReadingView({
           <div
             className="flex rounded-lg overflow-hidden text-xs"
             style={{ border: `1px solid ${colors.border}` }}
+            role="group"
+            aria-label={c.themeGroup}
           >
             {(Object.keys(THEMES) as Theme[]).map(t => (
               <button
@@ -266,15 +337,16 @@ export default function ReadingView({
                   color: theme === t ? "#C0974F" : colors.muted,
                 }}
               >
-                {t}
+                {c.themes[t]}
               </button>
             ))}
           </div>
 
           {/* Font size */}
-          <div className="flex items-center gap-1 ml-2">
+          <div className="flex items-center gap-1 ms-2">
             <button
               onClick={() => setFontSize(s => Math.max(16, s - 2))}
+              aria-label={c.decreaseFont}
               className="w-7 h-7 flex items-center justify-center text-lg transition-opacity hover:opacity-60"
               style={{ color: colors.muted }}
             >
@@ -282,6 +354,7 @@ export default function ReadingView({
             </button>
             <button
               onClick={() => setFontSize(s => Math.min(24, s + 2))}
+              aria-label={c.increaseFont}
               className="w-7 h-7 flex items-center justify-center text-xl font-semibold transition-opacity hover:opacity-60"
               style={{ color: colors.muted }}
             >
@@ -312,7 +385,7 @@ export default function ReadingView({
           }}
           className="px-3 py-1.5 text-xs rounded-full shadow-xl whitespace-nowrap font-medium"
         >
-          ✎ Add note to writer
+          {c.addNote}
         </button>
       )}
 
@@ -329,15 +402,16 @@ export default function ReadingView({
           >
             <div>
               <h3 className="text-base font-semibold" style={{ color: colors.text }}>
-                Private note to author
+                {c.privateNoteTitle}
               </h3>
               <p className="text-xs mt-1" style={{ color: colors.muted }}>
-                Only the author will see this. It won't be published.
+                {c.privateNoteHint}
               </p>
             </div>
             {noteModal.passage && (
               <blockquote
-                className="text-sm italic px-3 py-2 rounded-lg border-l-2"
+                className="text-sm italic px-3 py-2 rounded-lg border-s-2"
+                dir="auto"
                 style={{
                   borderColor: "#C0974F",
                   background: `${colors.border}50`,
@@ -350,7 +424,7 @@ export default function ReadingView({
             <textarea
               value={noteBody}
               onChange={e => setNoteBody(e.target.value)}
-              placeholder="Your thoughts, feedback, or reaction…"
+              placeholder={c.notePlaceholder}
               rows={4}
               className="w-full rounded-lg px-3 py-2.5 text-sm resize-none focus:outline-none transition"
               style={{
@@ -365,7 +439,7 @@ export default function ReadingView({
                 className="px-4 py-2 text-sm rounded-lg transition"
                 style={{ color: colors.muted }}
               >
-                Cancel
+                {c.cancel}
               </button>
               <button
                 onClick={() =>
@@ -379,7 +453,7 @@ export default function ReadingView({
                 className="px-4 py-2 text-sm rounded-lg font-medium transition disabled:opacity-40"
                 style={{ background: "#C0974F", color: "#fff" }}
               >
-                {sendNote.isPending ? "Sending…" : "Send note"}
+                {sendNote.isPending ? c.sending : c.sendNote}
               </button>
             </div>
           </div>
@@ -392,25 +466,28 @@ export default function ReadingView({
           {/* Chapter header */}
           <header className="mb-10 mt-4 text-center">
             <p className="text-xs uppercase tracking-widest mb-3" style={{ color: colors.muted }}>
-              Chapter {chapterNumber} of {totalChapters}
+              {c.chapterOf.replace("{n}", formatNumber(chapterNumber)).replace("{total}", formatNumber(totalChapters))}
             </p>
             <h1
               className="font-serif leading-tight mb-3"
+              dir="auto"
               style={{ fontSize: "1.75rem", color: colors.text }}
             >
               {chapter.title}
             </h1>
             <div className="flex items-center justify-center gap-3 text-xs" style={{ color: colors.muted }}>
-              <span>{chapter.word_count.toLocaleString()} words</span>
+              <span>{c.words.replace("{n}", formatNumber(chapter.word_count))}</span>
               <span>·</span>
-              <span>{readingMinutes(chapter.word_count)}</span>
+              <span>{readingMinutes(chapter.word_count, c, formatNumber)}</span>
             </div>
           </header>
 
-          {/* Chapter content */}
+          {/* Chapter content — prose direction follows the story text when known,
+              otherwise the browser auto-detects it; UI chrome uses the app locale. */}
           <div
             ref={contentRef}
             onMouseUp={handleMouseUp}
+            dir="auto"
             className="leading-relaxed font-serif select-text"
             style={{ fontSize: `${fontSize}px`, lineHeight: 1.85, color: colors.text }}
           >
@@ -434,7 +511,7 @@ export default function ReadingView({
               className="fixed bottom-24 left-1/2 -translate-x-1/2 px-5 py-2.5 rounded-full text-sm font-medium shadow-xl z-50"
               style={{ background: "#C0974F", color: "#fff" }}
             >
-              ✓ Note sent to author
+              {c.noteSent}
             </div>
           )}
 
@@ -449,7 +526,7 @@ export default function ReadingView({
                 className="flex items-center gap-2 text-sm transition-opacity hover:opacity-60"
                 style={{ color: colors.muted }}
               >
-                ← Previous chapter
+                <span className="rtl-flip inline-block">←</span> {c.previousChapter}
               </Link>
             ) : <div />}
 
@@ -459,14 +536,14 @@ export default function ReadingView({
                 className="px-5 py-2.5 rounded-xl text-sm font-medium transition"
                 style={{ background: "#C0974F", color: "#fff" }}
               >
-                Next chapter →
+                {c.nextChapter} <span className="rtl-flip inline-block">→</span>
               </Link>
             ) : (
               <div
                 className="px-5 py-2.5 rounded-xl text-sm border"
                 style={{ color: colors.muted, borderColor: colors.border }}
               >
-                End of story
+                {c.endOfStory}
               </div>
             )}
           </div>
@@ -481,26 +558,30 @@ export default function ReadingView({
                 <div>
                   <div className="text-2xl mb-2">✨</div>
                   <p className="text-sm font-medium" style={{ color: colors.text }}>
-                    Thank you for rating!
+                    {c.thankYou}
                   </p>
                   <p className="text-xs mt-1" style={{ color: colors.muted }}>
-                    You can also leave a written review on the story page.
+                    {c.reviewHint}
                   </p>
                   <Link
                     href={`/read/${slug}`}
                     className="inline-block mt-3 text-xs text-amber-600 hover:underline"
                   >
-                    Back to story page →
+                    {c.backToStory} <span className="rtl-flip inline-block">→</span>
                   </Link>
                 </div>
               ) : (
                 <>
                   <p className="text-base font-semibold font-serif" style={{ color: colors.text }}>
-                    {displayTitle ? `You finished "${displayTitle}"` : "You finished this story"}
-                    {displayAuthor && <span className="block text-sm font-normal opacity-70 mt-0.5">by {displayAuthor}</span>}
+                    {displayTitle ? c.finishedNamed.replace("{title}", displayTitle) : c.finishedGeneric}
+                    {displayAuthor && (
+                      <span className="block text-sm font-normal opacity-70 mt-0.5">
+                        {c.byAuthor.replace("{author}", displayAuthor)}
+                      </span>
+                    )}
                   </p>
                   <p className="text-sm" style={{ color: colors.muted }}>
-                    How would you rate it?
+                    {c.rateIt}
                   </p>
                   <div className="flex justify-center gap-2">
                     {[1,2,3,4,5].map(star => (
@@ -526,7 +607,7 @@ export default function ReadingView({
                   </div>
                   {!isAuthenticated && (
                     <p className="text-xs" style={{ color: colors.muted }}>
-                      Sign in to save your rating
+                      {c.signInToSave}
                     </p>
                   )}
                 </>

@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { request, mediaUrl } from "@/lib/api";
+import { useI18n } from "@/lib/i18n";
 
 interface StoryCard {
   id: string;
@@ -38,14 +39,75 @@ const GENRES = [
   "mystery", "horror", "historical", "adventure",
 ];
 
-const SORTS = [
-  { value: "recent",  label: "Recent" },
-  { value: "popular", label: "Popular" },
-  { value: "rating",  label: "Top rated" },
-];
+const GENRE_LABELS: Record<string, { en: string; ar: string }> = {
+  all: { en: "All", ar: "الكل" },
+  fantasy: { en: "Fantasy", ar: "فانتازيا" },
+  "sci-fi": { en: "Sci-Fi", ar: "خيال علمي" },
+  thriller: { en: "Thriller", ar: "إثارة" },
+  romance: { en: "Romance", ar: "رومانسية" },
+  literary: { en: "Literary", ar: "أدبية" },
+  mystery: { en: "Mystery", ar: "غموض" },
+  horror: { en: "Horror", ar: "رعب" },
+  historical: { en: "Historical", ar: "تاريخية" },
+  adventure: { en: "Adventure", ar: "مغامرة" },
+  scifi: { en: "Sci-Fi", ar: "خيال علمي" },
+  other: { en: "Other", ar: "أخرى" },
+};
+
+function genreLabel(value: string | null | undefined, locale: string): string {
+  if (!value) return "";
+  const hit = GENRE_LABELS[value.trim().toLowerCase()];
+  if (!hit) return value;
+  return locale === "ar" ? hit.ar : hit.en;
+}
+
+const COPY = {
+  en: {
+    hubTitle: "G-Ink Hub",
+    searchPlaceholder: "Search stories, authors…",
+    sorts: { recent: "Recent", popular: "Popular", rating: "Top rated" },
+    serial: "Serial",
+    chaptersShort: "{n} ch.",
+    reads: "{n} reads",
+    loadErrorTitle: "Couldn’t load stories.",
+    loadErrorBody: "This is a loading error, not missing content.",
+    tryAgain: "Try again",
+    noResults: "No stories found for \"{query}\"",
+    noStories: "No stories published yet.",
+    beFirst: "Be the first —",
+    startWriting: "start writing",
+    storyCount: "1 STORY",
+    storiesCount: "{n} STORIES",
+    previous: "Previous",
+    next: "Next",
+    page: "Page {n}",
+  },
+  ar: {
+    hubTitle: "مركز G-Ink",
+    searchPlaceholder: "ابحث عن قصص أو كتّاب…",
+    sorts: { recent: "الأحدث", popular: "الأكثر رواجًا", rating: "الأعلى تقييمًا" },
+    serial: "تسلسلية",
+    chaptersShort: "الفصول: {n}",
+    reads: "القراءات: {n}",
+    loadErrorTitle: "تعذّر تحميل القصص.",
+    loadErrorBody: "هذا خطأ في التحميل، وليس محتوى مفقودًا.",
+    tryAgain: "حاول مرة أخرى",
+    noResults: "لا توجد قصص مطابقة لـ «{query}»",
+    noStories: "لم تُنشر أي قصص بعد.",
+    beFirst: "كن الأول —",
+    startWriting: "ابدأ الكتابة",
+    storyCount: "قصة واحدة",
+    storiesCount: "عدد القصص: {n}",
+    previous: "السابق",
+    next: "التالي",
+    page: "الصفحة {n}",
+  },
+} as const;
 
 function StoryCardItem({ story }: { story: StoryCard }) {
   const router  = useRouter();
+  const { locale, formatNumber, t } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
   const initials = story.story_title.split(" ").slice(0, 2).map(w => w[0]).join("").toUpperCase();
 
   return (
@@ -110,13 +172,13 @@ function StoryCardItem({ story }: { story: StoryCard }) {
           )}
 
           {/* Badges */}
-          <div style={{ position: "absolute", top: 10, left: 10, display: "flex", gap: 6 }}>
+          <div style={{ position: "absolute", top: 10, insetInlineStart: 10, display: "flex", gap: 6 }}>
             {story.release_type === "serial" && (
-              <span className="iw-badge">Serial</span>
+              <span className="iw-badge">{c.serial}</span>
             )}
             {story.content_warnings.length > 0 && (
               <span className="iw-badge" style={{ background: "var(--surface-2)", color: "var(--faint)" }}>
-                ⚠ {story.content_warnings.length}
+                ⚠ {formatNumber(story.content_warnings.length)}
               </span>
             )}
           </div>
@@ -124,9 +186,9 @@ function StoryCardItem({ story }: { story: StoryCard }) {
           {story.genre && (
             <span
               className="iw-badge"
-              style={{ position: "absolute", bottom: 10, right: 10, textTransform: "capitalize" }}
+              style={{ position: "absolute", bottom: 10, insetInlineEnd: 10, textTransform: "capitalize" }}
             >
-              {story.genre}
+              {genreLabel(story.genre, locale)}
             </span>
           )}
         </div>
@@ -163,10 +225,10 @@ function StoryCardItem({ story }: { story: StoryCard }) {
                 onMouseEnter={e => (e.currentTarget.style.color = "var(--accent)")}
                 onMouseLeave={e => (e.currentTarget.style.color = "var(--text)")}
               >
-                {story.author_name || "Anonymous"}
+                {story.author_name || t("common.anonymous")}
               </Link>
               <div style={{ fontFamily: "var(--font-mono)", fontSize: 11, color: "var(--faint)" }}>
-                {story.total_chapters} ch. · {(story.view_count ?? 0).toLocaleString()} reads
+                {c.chaptersShort.replace("{n}", formatNumber(story.total_chapters))} · {c.reads.replace("{n}", formatNumber(story.view_count ?? 0))}
               </div>
             </div>
           </div>
@@ -224,8 +286,8 @@ function StoryCardItem({ story }: { story: StoryCard }) {
               }}
             >
               <span style={{ color: "var(--accent)" }}>★</span>
-              <span>{story.avg_rating.toFixed(1)}</span>
-              <span>({story.rating_count})</span>
+              <span>{formatNumber(story.avg_rating, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
+              <span>({formatNumber(story.rating_count)})</span>
             </div>
           )}
         </div>
@@ -239,6 +301,9 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
   const [search,   setSearch]   = useState("");
   const [page,     setPage]     = useState(1);
   const [inputVal, setInputVal] = useState("");
+
+  const { locale, formatNumber } = useI18n();
+  const c = locale === "ar" ? COPY.ar : COPY.en;
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["discovery", genre, sort, search, page],
@@ -257,6 +322,12 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
     setSearch(inputVal);
     setPage(1);
   };
+
+  const SORTS = [
+    { value: "recent",  label: c.sorts.recent },
+    { value: "popular", label: c.sorts.popular },
+    { value: "rating",  label: c.sorts.rating },
+  ];
 
   return (
     <div style={{ minHeight: "100vh" }}>
@@ -291,7 +362,7 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
               flexShrink: 0,
             }}
           >
-            G-Ink Hub
+            {c.hubTitle}
           </h2>
 
           {/* Search */}
@@ -300,14 +371,14 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
               <input
                 value={inputVal}
                 onChange={e => setInputVal(e.target.value)}
-                placeholder="Search stories, authors…"
+                placeholder={c.searchPlaceholder}
                 className="iw-input"
-                style={{ paddingRight: 36, fontSize: 14, padding: "8px 36px 8px 14px" }}
+                style={{ paddingInlineEnd: 36, paddingInlineStart: 14, paddingBlock: 8, fontSize: 14 }}
               />
               <button
                 type="submit"
                 style={{
-                  position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)",
+                  position: "absolute", insetInlineEnd: 12, top: "50%", transform: "translateY(-50%)",
                   background: "none", border: "none", color: "var(--faint)", cursor: "pointer",
                   fontSize: 16, padding: 0,
                 }}
@@ -362,7 +433,7 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
               className={`iw-chip${genre === g ? " active" : ""}`}
               style={{ flexShrink: 0, textTransform: "capitalize", fontSize: 12, padding: "4px 12px" }}
             >
-              {g}
+              {genreLabel(g, locale)}
             </button>
           ))}
         </div>
@@ -391,12 +462,12 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
           <div style={{ textAlign: "center", padding: "80px 0", color: "var(--faint)" }}>
             <div style={{ fontFamily: "var(--font-serif)", fontSize: 48, marginBottom: 16, opacity: 0.4 }}>⚠</div>
             <p style={{ fontFamily: "var(--font-serif)", fontSize: 18, color: "var(--muted)" }}>
-              Couldn’t load stories.
+              {c.loadErrorTitle}
             </p>
             <p style={{ fontSize: 14, color: "var(--faint)", marginTop: 8 }}>
-              This is a loading error, not missing content.{" "}
+              {c.loadErrorBody}{" "}
               <button onClick={() => refetch()} style={{ color: "var(--accent)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
-                Try again
+                {c.tryAgain}
               </button>
             </p>
           </div>
@@ -404,10 +475,10 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
           <div style={{ textAlign: "center", padding: "80px 0", color: "var(--faint)" }}>
             <div style={{ fontFamily: "var(--font-serif)", fontSize: 48, marginBottom: 16, opacity: 0.4 }}>✦</div>
             <p style={{ fontFamily: "var(--font-serif)", fontSize: 18, color: "var(--muted)" }}>
-              {search ? `No stories found for "${search}"` : "No stories published yet."}
+              {search ? c.noResults.replace("{query}", search) : c.noStories}
             </p>
             <p style={{ fontSize: 14, color: "var(--faint)", marginTop: 8 }}>
-              Be the first — <a href="/signup" style={{ color: "var(--accent)" }}>start writing</a>
+              {c.beFirst} <a href="/signup" style={{ color: "var(--accent)" }}>{c.startWriting}</a>
             </p>
           </div>
         ) : (
@@ -428,8 +499,10 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
                   letterSpacing: "0.06em",
                 }}
               >
-                {data.total.toLocaleString()} {data.total === 1 ? "STORY" : "STORIES"}
-                {search && ` · "${search}"`}
+                {data.total === 1
+                  ? c.storyCount
+                  : c.storiesCount.replace("{n}", formatNumber(data.total))}
+                {search && ` · «${search}»`}
               </p>
             </div>
 
@@ -454,7 +527,7 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
                   className="iw-btn secondary"
                   style={{ fontSize: 13 }}
                 >
-                  ← Previous
+                  <span className="rtl-flip" style={{ display: "inline-block" }}>←</span> {c.previous}
                 </button>
                 <span
                   style={{
@@ -466,7 +539,7 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
                     color: "var(--faint)",
                   }}
                 >
-                  Page {page}
+                  {c.page.replace("{n}", formatNumber(page))}
                 </span>
                 <button
                   onClick={() => setPage(p => p + 1)}
@@ -474,7 +547,7 @@ export default function DiscoveryFeed({ topOffset = "top-0" }: { topOffset?: str
                   className="iw-btn secondary"
                   style={{ fontSize: 13 }}
                 >
-                  Next →
+                  {c.next} <span className="rtl-flip" style={{ display: "inline-block" }}>→</span>
                 </button>
               </div>
             )}

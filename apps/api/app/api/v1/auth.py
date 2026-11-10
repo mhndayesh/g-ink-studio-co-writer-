@@ -34,6 +34,7 @@ async def signup(request: Request, payload: SignupRequest, db: DB):
         email=payload.email,
         password_hash=hash_password(payload.password),
         display_name=payload.display_name or payload.email.split("@")[0],
+        locale=payload.locale,
     )
     db.add(user)
     await db.flush()  # assign user.id before minting the refresh-token row

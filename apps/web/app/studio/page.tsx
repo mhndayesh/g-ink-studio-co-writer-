@@ -8,14 +8,27 @@ import * as api from "@/lib/api";
 import { useRequireAuth } from "@/lib/auth";
 import { Btn, Card, FG, Inp, Sel, PageHdr, Tag } from "@/components/ui/Primitives";
 import { ThemeToggle } from "@/components/shell/ThemeToggle";
+import { useI18n, type MessageKey } from "@/lib/i18n";
 
-const GENRES = ["Fantasy", "Sci-Fi", "Mystery", "Thriller", "Romance", "Historical", "Horror", "Literary", "Other"];
+const GENRES: Array<{ value: string; key: MessageKey }> = [
+  { value: "Fantasy", key: "genres.fantasy" },
+  { value: "Sci-Fi", key: "genres.scifi" },
+  { value: "Mystery", key: "genres.mystery" },
+  { value: "Thriller", key: "genres.thriller" },
+  { value: "Romance", key: "genres.romance" },
+  { value: "Historical", key: "genres.historical" },
+  { value: "Horror", key: "genres.horror" },
+  { value: "Literary", key: "genres.literary" },
+  { value: "Other", key: "genres.other" },
+];
 
 export default function StudioHub() {
   const router = useRouter();
   const qc = useQueryClient();
+  const { t, locale, formatNumber } = useI18n();
   const [title, setTitle] = useState("");
-  const [genre, setGenre] = useState(GENRES[0]);
+  const [genre, setGenre] = useState(GENRES[0].value);
+  const [language, setLanguage] = useState<"en" | "ar">(locale);
   const authed = useRequireAuth();
 
   const { data: stories, isLoading } = useQuery({
@@ -43,40 +56,46 @@ export default function StudioHub() {
   return (
     <main className="max-w-6xl mx-auto p-4 sm:p-6">
       <div className="mb-1">
-        <span className="text-[10px] uppercase tracking-[0.25em] text-ink-gold">Co-Writer</span>
-        <span className="text-[10px] text-ink-text3 mx-1">·</span>
-        <span className="text-[10px] uppercase tracking-[0.2em] text-ink-text3">G-Ink Studio</span>
+        <span className="text-[10px] uppercase tracking-[0.25em] text-ink-gold">{t("studio.coWriter")}</span>
+        <span className="text-[10px] text-ink-text3 mx-1">/</span>
+        <span className="text-[10px] uppercase tracking-[0.2em] text-ink-text3">{t("studio.brand")}</span>
       </div>
       <PageHdr
-        title="Your stories"
-        subtitle="Each story is a separate project. Open one to start writing."
+        title={t("studio.yourStories")}
+        subtitle={t("studio.storiesSubtitle")}
         right={
           <div className="flex gap-2 items-center">
             <ThemeToggle />
-            <Link href="/settings" className="btn"><Settings size={14}/> Settings</Link>
-            <Btn variant="ghost" onClick={logout}><LogOut size={14}/> Sign out</Btn>
+            <Link href="/settings" className="btn"><Settings size={14}/> {t("studio.settings")}</Link>
+            <Btn variant="ghost" onClick={logout}><LogOut size={14}/> {t("studio.signOut")}</Btn>
           </div>
         }
       />
 
       <Card className="mb-6">
-        <h2 className="font-display text-lg mb-3">New story</h2>
-        <div className="grid gap-3 md:grid-cols-[1fr_220px_auto] items-end">
-          <FG label="Title">
-            <Inp value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Bonebreaker Bay" />
+        <h2 className="font-display text-lg mb-3">{t("studio.newStory")}</h2>
+        <div className="grid gap-3 md:grid-cols-[1fr_180px_160px_auto] items-end">
+          <FG label={t("studio.title")}>
+            <Inp value={title} onChange={e => setTitle(e.target.value)} placeholder={t("studio.titlePlaceholder")} />
           </FG>
-          <FG label="Genre">
+          <FG label={t("studio.genre")}>
             <Sel value={genre} onChange={e => setGenre(e.target.value)}>
-              {GENRES.map(g => <option key={g} value={g}>{g}</option>)}
+              {GENRES.map(g => <option key={g.value} value={g.value}>{t(g.key)}</option>)}
+            </Sel>
+          </FG>
+          <FG label={t("studio.writingLanguage")}>
+            <Sel value={language} onChange={e => setLanguage(e.target.value as "en" | "ar")}>
+              <option value="ar">{t("studio.languageArabic")}</option>
+              <option value="en">{t("studio.languageEnglish")}</option>
             </Sel>
           </FG>
           <Btn
             variant="primary"
             disabled={!title.trim() || create.isPending}
-            onClick={() => create.mutate({ title: title.trim(), genre })}
+            onClick={() => create.mutate({ title: title.trim(), genre, language })}
             className="mb-3"
           >
-            <Plus size={14}/> {create.isPending ? "Creating…" : "Create"}
+            <Plus size={14}/> {create.isPending ? t("common.creating") : t("common.create")}
           </Btn>
         </div>
       </Card>
@@ -102,24 +121,24 @@ export default function StudioHub() {
             <div className="p-4 flex flex-col flex-1">
               <div className="flex items-start justify-between gap-2">
                 <Link href={`/studio/${s.id}/flow`} className="flex-1 min-w-0">
-                  <h3 className="font-display text-lg text-ink-text mb-1 truncate">{s.title || "Untitled"}</h3>
-                  <p className="text-xs text-ink-text2 uppercase tracking-wider">{s.genre || "Story"}</p>
+                  <h3 className="font-display text-lg text-ink-text mb-1 truncate">{s.title || t("common.untitled")}</h3>
+                  <p className="text-xs text-ink-text2 uppercase tracking-wider">{s.genre ? (GENRES.find(g => g.value === s.genre) ? t(GENRES.find(g => g.value === s.genre)!.key) : s.genre) : t("common.story")}</p>
                 </Link>
                 <button
-                  onClick={() => { if (confirm(`Delete "${s.title}"?`)) del.mutate(s.id); }}
+                  onClick={() => { if (confirm(t("studio.deleteConfirm", { title: s.title || t("common.untitled") }))) del.mutate(s.id); }}
                   className="text-ink-text3 hover:text-ink-red"
-                  aria-label="Delete story"
+                  aria-label={t("common.deleteStory")}
                 ><Trash2 size={14}/></button>
               </div>
               <div className="flex flex-wrap gap-2 mt-3 text-xs text-ink-text2">
-                <Tag color="muted"><BookOpen size={10}/> {s.stats?.chapters ?? 0} chapters</Tag>
-                <Tag color="muted">{s.stats?.characters ?? 0} characters</Tag>
-                <Tag color="muted">{s.stats?.words ?? 0} words</Tag>
+                <Tag color="muted"><BookOpen size={10}/> {t("studio.chaptersCount", { count: formatNumber(s.stats?.chapters ?? 0) })}</Tag>
+                <Tag color="muted">{t("studio.charactersCount", { count: formatNumber(s.stats?.characters ?? 0) })}</Tag>
+                <Tag color="muted">{t("studio.wordsCount", { count: formatNumber(s.stats?.words ?? 0) })}</Tag>
               </div>
               <div className="flex gap-2 mt-4">
-                <Link href={`/studio/${s.id}/flow`} className="btn btn-primary flex-1 justify-center">Open →</Link>
-                <Link href={`/publish/${s.id}`} className="btn justify-center" title="Publish this story">
-                  <Send size={14}/> Publish
+                <Link href={`/studio/${s.id}/flow`} className="btn btn-primary flex-1 justify-center">{t("studio.open")} <span className="rtl-flip">?</span></Link>
+                <Link href={`/publish/${s.id}`} className="btn justify-center" title={t("common.publish")}>
+                  <Send size={14}/> {t("common.publish")}
                 </Link>
               </div>
             </div>
@@ -128,7 +147,7 @@ export default function StudioHub() {
         })}
         {authed && !isLoading && (stories || []).length === 0 && (
           <Card className="md:col-span-2 lg:col-span-3 text-center text-ink-text2">
-            No stories yet. Create your first above.
+            {t("studio.noStories")}
           </Card>
         )}
       </div>

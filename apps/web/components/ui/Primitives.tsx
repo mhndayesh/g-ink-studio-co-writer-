@@ -1,6 +1,22 @@
 "use client";
 import { cn } from "@/lib/cn";
 import { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode, SelectHTMLAttributes, TextareaHTMLAttributes } from "react";
+import { useI18n } from "@/lib/i18n";
+
+const QUERY_ERROR_COPY = {
+  en: {
+    defaultSubject: "this",
+    defaultMessage: "Something went wrong loading your data.",
+    title: (what: string) => `Couldn’t load ${what}.`,
+    safe: "Your work is safe — this is a loading error, not missing data.",
+  },
+  ar: {
+    defaultSubject: "هذا المحتوى",
+    defaultMessage: "حدث خطأ أثناء تحميل بياناتك.",
+    title: (what: string) => `تعذّر تحميل ${what}.`,
+    safe: "عملك بأمان — هذا خطأ تحميل، وليس بيانات مفقودة.",
+  },
+} as const;
 
 export function Btn({ className, variant = "default", ...p }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "default" | "primary" | "ghost" }) {
   return <button className={cn("btn", variant === "primary" && "btn-primary", variant === "ghost" && "btn-ghost", className)} {...p} />;
@@ -47,15 +63,18 @@ export function PageHdr({ title, subtitle, right }: { title: string; subtitle?: 
 // Shown when a list/data query FAILS — so a failed fetch is no longer
 // indistinguishable from "you have no data" (which reads as "your data is gone").
 // Pass the query's `error` and `refetch` so the writer can retry in place.
-export function QueryError({ error, retry, what = "this" }: { error: unknown; retry?: () => void; what?: string }) {
-  const msg = error instanceof Error ? error.message : "Something went wrong loading your data.";
+export function QueryError({ error, retry, what }: { error: unknown; retry?: () => void; what?: string }) {
+  const { locale, t } = useI18n();
+  const c = locale === "ar" ? QUERY_ERROR_COPY.ar : QUERY_ERROR_COPY.en;
+  const subject = what ?? c.defaultSubject;
+  const msg = error instanceof Error ? error.message : c.defaultMessage;
   return (
     <div className="rounded-lg border border-ink-red/40 bg-ink-red/10 px-4 py-3 text-sm text-ink-text2">
-      <p className="text-ink-red font-medium">Couldn’t load {what}.</p>
+      <p className="text-ink-red font-medium">{c.title(subject)}</p>
       <p className="mt-0.5 text-ink-text3">{msg}</p>
-      <p className="mt-0.5 text-ink-text3">Your work is safe — this is a loading error, not missing data.</p>
+      <p className="mt-0.5 text-ink-text3">{c.safe}</p>
       {retry && (
-        <Btn variant="ghost" className="mt-2" onClick={() => retry()}>Try again</Btn>
+        <Btn variant="ghost" className="mt-2" onClick={() => retry()}>{t("common.tryAgain")}</Btn>
       )}
     </div>
   );
