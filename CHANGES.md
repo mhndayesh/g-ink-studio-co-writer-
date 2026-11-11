@@ -26,10 +26,10 @@ Every change lands here as it is made — what, and why. Newest first.
   re-created from a stale note: `Dockerfile` (3 sites), `.dockerignore`, `apps/api/entrypoint.sh`
   (2), `apps/web/Dockerfile`, `apps/web/next.config.ts`, `docker-compose.prod.yml`, and the host
   examples in `app/db/session.py` + `migrations/env.py`.
-  `.github/workflows/ci.yml` was deliberately left out: GitHub refuses any push that touches a
-  workflow file without the `workflow` token scope, which this account does not have, so including
-  it would have blocked the whole push. The reworded file is parked at
-  `%TEMP%\opencode\ci.yml.pending-workflow-scope`.
+- `.github/workflows/ci.yml` (`98c4ba5`): the header comment said Railway builds and deploys this
+  repo directly; it now points at the docker-compose VPS path in `DEPLOY.md`. This had to be a
+  separate commit — GitHub rejects any push touching a workflow file without the `workflow` token
+  scope, which the account had to add first. Comment only; the file still parses.
   Comments only, no behaviour change. `$PORT` binding and the healthchecks stay: they are generic
   container behaviour, not Railway-specific.
 - Opened T-007: the privacy policy still names Railway as a hosting subprocessor in both

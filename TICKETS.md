@@ -60,11 +60,10 @@ _none_
   Railway builds or hosts this repo rewritten so nobody re-creates them — `Dockerfile` (3 sites,
   including the pre-deploy-migration note), `.dockerignore`, `apps/api/entrypoint.sh` (2),
   `apps/web/Dockerfile`, `apps/web/next.config.ts`, `docker-compose.prod.yml`, plus the generic
-  host examples in `app/db/session.py` and `migrations/env.py`. `ci.yml`'s comment was **not**
-  changed: GitHub rejects any push touching `.github/workflows/` without the `workflow` token
-  scope, which this account lacks (`gist, read:org, repo`). The reworded file is parked at
-  `%TEMP%\opencode\ci.yml.pending-workflow-scope` — apply it after `gh auth refresh -s workflow`,
-  otherwise that one stale comment stays. Comments only — no behaviour changed. Verified:
+  host examples in `app/db/session.py` and `migrations/env.py`. `ci.yml`'s comment was held back
+  at first — GitHub rejects any push touching `.github/workflows/` without the `workflow` token
+  scope, which the account lacked at the time — and applied afterwards in commit `98c4ba5` once
+  the owner re-authenticated with that scope. Comments only — no behaviour changed. Verified:
   `py_compile` exit 0 on both
   Python files, `tsc --noEmit` exit 0 on the frontend, and both YAML files still parse. Migration
   remains covered by `docker compose run --rm api alembic upgrade head` (documented in `DEPLOY.md`
