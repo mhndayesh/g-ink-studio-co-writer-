@@ -37,6 +37,36 @@ _none_
 
 ## Closed
 
+### T-011 — One-click start.bat / stop.bat that leave no leftovers
+- **Status:** CLOSED
+- **Opened:** 2026-11-11
+- **Area:** `start.bat`, `stop.bat`, `stop.ps1`, `run.ps1`
+- **Problem:** Starting required a PowerShell command with two terminals and manual PIDs;
+  stopping meant hunting `node.exe` / `python.exe` by hand. npm spawns a child `node` and uvicorn a
+  reload child, so killing the process you see leaves an orphan still holding the port.
+- **Resolution:** `start.bat` -> `run.ps1 -Detach`, `stop.bat` -> `stop.ps1`.
+  - Start: refuses if a recorded pid is alive or a port is busy, applies migrations, launches both
+    services hidden, records parent PIDs to `.run-logs/pids.json`, waits for both ports, and
+    **verifies HTTP** (`/health` and `/`) instead of assuming success. Exits non-zero on failure.
+  - Stop: `taskkill /T` without `/F` first (graceful, whole tree); only what ignores it is force-
+    killed after ~5s; then sweeps 8080/3000 for survivors (stray `node` from npm.cmd, uvicorn
+    reloader); deletes the pidfile; **exits non-zero if a port is still busy**, so a silent leftover
+    cannot pass as success.
+  - Three bugs found and fixed while testing: (1) inline PowerShell in `.bat` with `^`
+    continuations is mangled by cmd's parser and `*>` was eaten by cmd — replaced with real script
+    files; (2) PowerShell 5.1 reads `.ps1` as ANSI without a BOM, so a single em dash broke string
+    parsing — all four files are now pure ASCII (verified: 0 non-ASCII bytes); (3)
+    `$ErrorActionPreference='Stop'` turned alembic's INFO-on-stderr into a terminating error —
+    switched to explicit `$LASTEXITCODE` checks.
+  - Verified end to end, twice: start -> `/health` 200 `{"api":true,"db":true}`, `:3000` 200, pids
+    recorded, launcher exits; stop -> both trees stopped, `pids.json` removed, ports 8080/3000 free,
+    no `python`/`node` leftovers, exit 0.
+  Commit ref: see `CHANGES.md` 2026-11-11 (start/stop scripts).
+- **Docs to update:** `RUN.md` — add `start.bat` / `stop.bat` as the Windows path (still says WSL
+  or Git Bash first). Same deferred doc edit as T-008.
+
+## Closed
+
 ### T-009 — Triage and fix the npm audit findings
 - **Status:** CLOSED
 - **Opened:** 2026-11-11

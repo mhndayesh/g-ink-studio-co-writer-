@@ -1,17 +1,22 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Start Co-Writer natively on Windows — no WSL, no Docker.
+    Start Co-Writer natively on Windows - no WSL, no Docker.
 
 .DESCRIPTION
     Native equivalent of ./run.sh (which hardcodes the Unix .venv/bin/ layout and so
     only works under WSL). First run creates the venv, installs API + web deps, and
     generates apps/api/.env with fresh secrets if it's missing. Then it applies
     migrations and starts the API on :8080 and the web app on :3000.
-    Ctrl+C stops both.
+
+    Two modes:
+      default   runs in this window; Ctrl+C stops both.
+      -Detach   records the PIDs to .run-logs/pids.json and exits, leaving both
+                running. Stop them with stop.bat / stop.ps1.
 
 .EXAMPLE
     .\run.ps1
+    .\run.ps1 -Detach
     .\run.ps1 -NoReload          # no uvicorn auto-reload (lighter on Windows)
     .\run.ps1 -ApiPort 8081 -WebPort 3001
 #>
@@ -19,10 +24,14 @@
 param(
     [int]$ApiPort = 8080,
     [int]$WebPort = 3000,
-    [switch]$NoReload
+    [switch]$NoReload,
+    [switch]$Detach
 )
 
-$ErrorActionPreference = 'Stop'
+# 'Continue', not 'Stop': native tools here (alembic, pip, npm) write progress to stderr,
+# and under 'Stop' PowerShell turns any stderr line into a terminating error. Failures are
+# caught explicitly via $LASTEXITCODE and by verifying the ports/HTTP afterwards.
+$ErrorActionPreference = 'Continue'
 
 $Root   = $PSScriptRoot
 $ApiDir = Join-Path $Root 'apps/api'
@@ -31,10 +40,10 @@ $Venv   = Join-Path $ApiDir '.venv'
 $VenvPy = Join-Path $Venv 'Scripts/python.exe'
 $LogDir = Join-Path $Root '.run-logs'
 
-function Ok($m)  { Write-Host "[ok]   $m" -ForegroundColor Green }
-function Inf($m) { Write-Host "[info] $m" -ForegroundColor Cyan }
+function Ok($m)   { Write-Host "[ok]   $m" -ForegroundColor Green }
+function Inf($m)  { Write-Host "[info] $m" -ForegroundColor Cyan }
 function Warn($m) { Write-Host "[warn] $m" -ForegroundColor Yellow }
-function Err($m) { Write-Host "[err]  $m" -ForegroundColor Red }
+function Err($m)  { Write-Host "[err]  $m" -ForegroundColor Red }
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 
@@ -47,21 +56,42 @@ function Wait-Port([int]$Port, [string]$Label, [int]$Seconds) {
         if (Test-Port $Port) { Ok "$Label up on :$Port"; return $true }
         Start-Sleep -Seconds 1
     }
-    Warn "$Label did not come up on :$Port within ${Seconds}s — see $LogDir"
+    Warn "$Label did not come up on :$Port within ${Seconds}s - see $LogDir"
     return $false
 }
 
-foreach ($p in @(@{ Port = $ApiPort; Name = 'api' }, @{ Port = $WebPort; Name = 'web' })) {
-    if (Test-Port $p.Port) { Err "port $($p.Port) is already in use — stop that process first"; exit 1 }
+function Get-Status([string]$Url, [int]$Seconds) {
+    try { (Invoke-WebRequest -Uri $Url -TimeoutSec $Seconds -UseBasicParsing).StatusCode } catch { $null }
 }
 
-# ── Python venv ──────────────────────────────────────────────────────────────
+# Refuse to start twice: a recorded pid that is still alive, or a busy port.
+$PidFile = Join-Path $LogDir 'pids.json'
+if (Test-Path $PidFile) {
+    try {
+        $rec = Get-Content $PidFile -Raw | ConvertFrom-Json
+        $alive = @()
+        foreach ($x in @($rec.api, $rec.web)) {
+            if ($x -and (Get-Process -Id $x -ErrorAction SilentlyContinue)) { $alive += $x }
+        }
+        if ($alive.Count -gt 0) {
+            Err "already running (pid $($alive -join ', ')) - run stop.bat first"
+            exit 1
+        }
+    } catch { }
+    Remove-Item $PidFile -Force -ErrorAction SilentlyContinue
+}
+
+foreach ($pair in @(@{ Port = $ApiPort; Name = 'api' }, @{ Port = $WebPort; Name = 'web' })) {
+    if (Test-Port $pair.Port) { Err "port $($pair.Port) is already in use - run stop.bat first"; exit 1 }
+}
+
+# Python venv
 if (-not (Test-Path $VenvPy)) {
     Inf 'creating Python venv...'
     $made = $false
     foreach ($launcher in @(@('py', '-3.11'), @('py', '-3.12'), @('python'))) {
-        $exe  = $launcher[0]
-        $pre  = @($launcher | Select-Object -Skip 1)
+        $exe = $launcher[0]
+        $pre = @($launcher | Select-Object -Skip 1)
         if (-not (Get-Command $exe -ErrorAction SilentlyContinue)) { continue }
         & $exe @pre -m venv $Venv
         if ($LASTEXITCODE -eq 0 -and (Test-Path $VenvPy)) { $made = $true; break }
@@ -78,7 +108,7 @@ if (-not (Test-Path (Join-Path $Venv 'Scripts/uvicorn.exe'))) {
     Ok 'API dependencies installed'
 }
 
-# ── Web dependencies ─────────────────────────────────────────────────────────
+# Web dependencies
 if (-not (Test-Path (Join-Path $WebDir 'node_modules'))) {
     Inf 'installing web dependencies (first run, this takes a few minutes)...'
     Push-Location $WebDir
@@ -89,7 +119,7 @@ if (-not (Test-Path (Join-Path $WebDir 'node_modules'))) {
     Ok 'web dependencies installed'
 }
 
-# ── Local .env ───────────────────────────────────────────────────────────────
+# Local .env
 $EnvFile = Join-Path $ApiDir '.env'
 if (-not (Test-Path $EnvFile)) {
     Inf 'generating apps/api/.env with fresh secrets...'
@@ -108,15 +138,15 @@ if (-not (Test-Path $EnvFile)) {
     Ok 'wrote apps/api/.env'
 }
 
-# ── Migrations ───────────────────────────────────────────────────────────────
+# Migrations
 Inf 'applying migrations...'
 Push-Location $ApiDir
 & (Join-Path $Venv 'Scripts/alembic.exe') upgrade head *>> (Join-Path $LogDir 'migrate.log')
 $migExit = $LASTEXITCODE
 Pop-Location
-if ($migExit -eq 0) { Ok 'database at head' } else { Warn 'migrations failed — see .run-logs/migrate.log' }
+if ($migExit -eq 0) { Ok 'database at head' } else { Warn 'migrations failed - see .run-logs/migrate.log' }
 
-# ── Start both ───────────────────────────────────────────────────────────────
+# Start both
 $apiArgs = @('-m', 'uvicorn', 'app.main:app', '--port', $ApiPort)
 if (-not $NoReload) { $apiArgs += '--reload' }
 
@@ -136,26 +166,42 @@ try {
     $apiOk = Wait-Port $ApiPort 'api' 60
     $webOk = Wait-Port $WebPort 'web' 90
 
+    $apiCode = if ($apiOk) { Get-Status "http://localhost:$ApiPort/health" 30 } else { $null }
+    $webCode = if ($webOk) { Get-Status "http://localhost:$WebPort" 120 } else { $null }
+
     Write-Host ''
-    if ($apiOk) { Write-Host "  API   http://localhost:$ApiPort" -ForegroundColor White }
+    if ($apiCode -eq 200) { Write-Host "  API   http://localhost:$ApiPort   health 200" -ForegroundColor Green }
+    else { Write-Host "  API   FAILED - see $LogDir\api.err.log" -ForegroundColor Red }
     if ($apiOk) { Write-Host "  Docs  http://localhost:$ApiPort/docs" -ForegroundColor DarkGray }
-    if ($webOk) { Write-Host "  App   http://localhost:$WebPort" -ForegroundColor White }
+    if ($webCode -eq 200) { Write-Host "  App   http://localhost:$WebPort   200" -ForegroundColor Green }
+    else { Write-Host "  App   FAILED - see $LogDir\web.err.log" -ForegroundColor Red }
     Write-Host "  Logs  $LogDir" -ForegroundColor DarkGray
+
+    if ($Detach) {
+        @{ api = $api.Id; web = $web.Id; started = (Get-Date).ToString('o'); apiPort = $ApiPort; webPort = $WebPort } |
+            ConvertTo-Json | Set-Content -Encoding utf8 $PidFile
+        Ok "pids recorded (api=$($api.Id) web=$($web.Id)) - stop with stop.bat"
+        Write-Host ''
+        if ($apiCode -eq 200 -and $webCode -eq 200) { exit 0 } else { exit 1 }
+    }
+
     Write-Host ''
     Inf 'Ctrl+C stops both'
     Write-Host ''
 
     while ($true) {
         Start-Sleep -Seconds 2
-        if ($api.HasExited) { Warn "api exited (code $($api.ExitCode)) — see .run-logs/api.err.log"; break }
-        if ($web.HasExited) { Warn "web exited (code $($web.ExitCode)) — see .run-logs/web.err.log"; break }
+        if ($api.HasExited) { Warn "api exited (code $($api.ExitCode)) - see .run-logs/api.err.log"; break }
+        if ($web.HasExited) { Warn "web exited (code $($web.ExitCode)) - see .run-logs/web.err.log"; break }
     }
 }
 finally {
-    foreach ($proc in @($api, $web)) {
-        if ($proc -and -not $proc.HasExited) {
-            & taskkill /PID $proc.Id /T /F *> $null
+    if (-not $Detach) {
+        foreach ($proc in @($api, $web)) {
+            if ($proc -and -not $proc.HasExited) {
+                & taskkill /PID $proc.Id /T /F *> $null
+            }
         }
+        Ok 'stopped'
     }
-    Ok 'stopped'
 }

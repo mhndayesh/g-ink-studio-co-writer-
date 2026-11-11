@@ -4,6 +4,21 @@ Every change lands here as it is made — what, and why. Newest first.
 
 ---
 
+## 2026-11-11 — One-click start/stop scripts (T-011)
+
+- Added `start.bat`, `stop.bat` and `stop.ps1`; `run.ps1` gained `-Detach`. Why: npm spawns a
+  child `node` and uvicorn a reload child, so killing the visible process leaves an orphan holding
+  the port. The pair records parent PIDs, verifies HTTP before claiming success, stops gracefully
+  first and sweeps the ports afterwards, and returns a non-zero exit code if anything survives.
+- `start.bat` -> `run.ps1 -Detach`; `stop.bat` -> `stop.ps1`. Both are thin wrappers so the logic
+  lives in one place.
+- Fixed while testing: cmd mangles inline PowerShell with `^` continuations (and eats `*>`), so the
+  payload moved into `.ps1` files; PowerShell 5.1 decodes `.ps1` as ANSI without a BOM, so all four
+  files were rewritten pure ASCII after an em dash broke parsing; `$ErrorActionPreference='Stop'`
+  made alembic's stderr progress a terminating error, replaced with explicit `$LASTEXITCODE` checks.
+- Verified twice: start -> health 200 / app 200 / pids recorded / launcher exits; stop -> ports
+  free, pidfile removed, no python or node leftovers, exit 0.
+
 ## 2026-11-11 — Native Windows runner (T-008)
 
 - Added `run.ps1`: creates `.venv` + `node_modules` on first run, generates `apps/api/.env` when
