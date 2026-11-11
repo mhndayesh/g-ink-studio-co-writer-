@@ -19,13 +19,62 @@ Never delete a ticket. Only one ticket may be FIXING at a time.
 
 ## Open
 
-_none_
+### T-010 — Upgrade Next 15 -> 16 to clear the remaining `next` / `postcss` advisory
+- **Status:** OPEN
+- **Opened:** 2026-11-11
+- **Area:** `apps/web/package.json`, `apps/web/next.config.ts`
+- **Problem:** `npm audit` still reports `next` (moderate, direct) and `postcss@8.4.31` nested
+  under it (high). Both are only fixed by `next@16.4.6`, a semver-major jump from the current
+  `^15.5.29`. An `overrides` entry for the nested postcss was tried and rejected: npm refuses an
+  override against Next's exact pin and leaves the tree marked `invalid`, so it was reverted.
+- **Resolution:** (filled at close) — needs a deliberate Next 16 migration (config, caching
+  semantics, re-verify lint/tsc/build and the running app), not an audit-driven bump.
+- **Docs to update:** (filled at close)
 
 ## Fixing
 
 _none_
 
 ## Closed
+
+### T-009 — Triage and fix the npm audit findings
+- **Status:** CLOSED
+- **Opened:** 2026-11-11
+- **Area:** `apps/web` (`package-lock.json`)
+- **Problem:** `npm ci` reported 9 vulnerabilities (7 moderate, 2 high) on a clean install.
+- **Resolution:** Reduced 9 -> 8 and eliminated one of the two highs.
+  - Fixed: `brace-expansion` (high, several DoS advisories) via `npm audit fix` — a non-breaking
+    transitive bump. Lockfile diff is 3 lines.
+  - Blocked upstream: the 5 `@typescript-eslint/*` moderates plus `minimatch`. `npm audit fix`
+    cannot reshape that subtree, and there is **no patched release** — latest
+    `@typescript-eslint/parser` is 8.72.2, the top of the affected range (`6.16.0 - 8.72.2`).
+    Dev-only lint tooling; it never reaches the runtime bundle.
+  - Blocked on a major: `next` (moderate) and `postcss@8.4.31` nested under it (high) need
+    `next@16.4.6`. Tried an `overrides` entry for the nested postcss; npm rejects an override
+    against Next's exact pin and leaves the node as `invalid`, so it was reverted to keep the tree
+    consistent (`npm ls --depth=0` clean). Tracked as T-010.
+- **Docs to update:** none.
+
+### T-008 — Run the app natively on Windows (no WSL, no Docker)
+- **Status:** CLOSED
+- **Opened:** 2026-11-11
+- **Area:** repo root, new `run.ps1`
+- **Problem:** `run.sh` hardcodes the Unix venv layout (`$VENV/bin/python`, `bin/uvicorn`), so on
+  native Windows it can only work under WSL — where it would also build a *Linux* venv unusable
+  from PowerShell. There was no native way to start both services.
+- **Resolution:** Added `run.ps1`, the native equivalent: creates `.venv` (Python 3.11+) and
+  `node_modules` on first run, generates `apps/api/.env` with fresh secrets when missing, applies
+  migrations, refuses to start on a busy port, then starts the API on :8080 and the web app on
+  :3000 with logs in `.run-logs/`, and Ctrl+C kills both process trees. Options: `-NoReload`,
+  `-ApiPort`, `-WebPort`.
+  Verified by actually running it natively — not just by reading it: `GET /health` -> **200**
+  `{"ok":true,"data":{"api":true,"db":true,"neo4j":null}}`; `GET /docs` -> 200;
+  `GET :3000` -> **200**, 23,408 bytes, `<title>G-Ink Studio - Write, connect, publish</title>`.
+  `pip check` clean, `import app.main` returns a FastAPI app, dev DB already at 0023 (head).
+  Commit ref: see `CHANGES.md` 2026-11-11 (native runner).
+- **Docs to update:** `RUN.md` — its Windows notes still say "use WSL2 or Git Bash"; now that
+  `run.ps1` exists, that section should point at it first. Left for a separate edit so the doc
+  change can be reviewed on its own.
 
 ### T-007 — Privacy policy still names Railway as a hosting provider
 - **Status:** CLOSED

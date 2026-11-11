@@ -4,6 +4,27 @@ Every change lands here as it is made — what, and why. Newest first.
 
 ---
 
+## 2026-11-11 — Native Windows runner (T-008)
+
+- Added `run.ps1`: creates `.venv` + `node_modules` on first run, generates `apps/api/.env` when
+  missing, applies migrations, refuses to start on a busy port, starts API :8080 and web :3000,
+  Ctrl+C stops both process trees. Why: `run.sh` hardcodes the Unix `bin/` venv layout, so native
+  Windows had no way to start the app — and running it under WSL would create a Linux venv that
+  PowerShell can't use.
+- Verified by running it: `/health` 200 with `{"api":true,"db":true}`, `/docs` 200, `:3000` 200
+  with the expected title.
+
+## 2026-11-11 — npm audit: 9 -> 8, one high cleared (T-009)
+
+- `apps/web/package-lock.json`: `brace-expansion` bumped (3-line diff) via `npm audit fix`. Why:
+  several DoS advisories at high severity, non-breaking transitive bump.
+- Left open, with reasons: `next` + nested `postcss@8.4.31` need `next@16.4.6` (semver major) —
+  tracked as T-010. The 5 `@typescript-eslint` moderates + `minimatch` have no patched release
+  (latest is 8.72.2, the top of the affected range) and are dev-only tooling.
+- Tried an `overrides` entry for the nested postcss and reverted it: npm rejects an override
+  against Next's exact pin and leaves the tree marked `invalid`. A clean tree with a known,
+  documented advisory beats a broken dependency graph.
+
 ## 2026-11-11 — Privacy policy: Railway removed from the subprocessor list (T-007)
 
 - `apps/web/app/privacy/page.tsx`: both language blocks of section 5 now read
