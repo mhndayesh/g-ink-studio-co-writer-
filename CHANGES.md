@@ -4,6 +4,37 @@ Every change lands here as it is made — what, and why. Newest first.
 
 ---
 
+## 2026-11-11 — Privacy policy: Railway removed from the subprocessor list (T-007)
+
+- `apps/web/app/privacy/page.tsx`: both language blocks of section 5 now read
+  `<B>Cloudflare</B> — تقديم المحتوى والأمان` / `content delivery and security`.
+  Why: the Railway deploy path was removed in T-006, so naming Railway as a hosting subprocessor
+  was no longer true. The "hosting" claim was dropped with it rather than reassigned to
+  Cloudflare, which provides CDN and security, not application hosting — inventing a replacement
+  host would have written a false claim into legal text.
+- Note: the policy now names **no** hosting provider. If the app runs on Hetzner per `DEPLOY.md`,
+  adding it back is the owner's call, in both languages.
+
+## 2026-11-11 — Removed the Railway deploy path (T-006)
+
+- Deleted `railway.json`, `railway.worker.json`, `apps/web/railway.json`.
+  Why: Railway is not used. The three files were the last trace of it after `RAILWAY.md` was
+  removed in T-002. Root `railway.json` carried the `preDeployCommand` that ran
+  `alembic upgrade head` on deploy, so this was flagged to the owner before deleting rather than
+  executed blind.
+- Rewrote the comments that told readers Railway builds this repo, so the configs don't get
+  re-created from a stale note: `Dockerfile` (3 sites), `.dockerignore`, `apps/api/entrypoint.sh`
+  (2), `apps/web/Dockerfile`, `apps/web/next.config.ts`, `docker-compose.prod.yml`, and the host
+  examples in `app/db/session.py` + `migrations/env.py`.
+  `.github/workflows/ci.yml` was deliberately left out: GitHub refuses any push that touches a
+  workflow file without the `workflow` token scope, which this account does not have, so including
+  it would have blocked the whole push. The reworded file is parked at
+  `%TEMP%\opencode\ci.yml.pending-workflow-scope`.
+  Comments only, no behaviour change. `$PORT` binding and the healthchecks stay: they are generic
+  container behaviour, not Railway-specific.
+- Opened T-007: the privacy policy still names Railway as a hosting subprocessor in both
+  languages. Left untouched on purpose — naming the real host is a legal claim for the owner.
+
 ## 2026-11-11 — Committed the session work
 
 - `a9b1056` chore(repo): shrink checkout, drop stale docs, add ticket log (T-001, T-002, T-003)

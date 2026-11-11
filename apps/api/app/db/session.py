@@ -10,8 +10,8 @@ _settings = get_settings()
 
 
 def _normalize_db_url(url: str) -> str:
-    """Force the asyncpg driver on bare Postgres URLs. Managed hosts (Railway,
-    Render, Heroku, Supabase) hand out `postgresql://` (or legacy `postgres://`),
+    """Force the asyncpg driver on bare Postgres URLs. Managed hosts (Render,
+    Heroku, Supabase) hand out `postgresql://` (or legacy `postgres://`),
     but our async engine needs `postgresql+asyncpg://`. Normalizing here means the
     operator can paste the provider's URL verbatim and it just works."""
     if url.startswith("postgres://"):

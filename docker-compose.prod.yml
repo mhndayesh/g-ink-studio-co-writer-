@@ -95,7 +95,7 @@ services:
   api:
     # `image` is what CI pushes/pulls from GHCR; `build` lets a plain VPS build
     # from source with `docker compose up -d --build` (no registry/CI needed).
-    # Builds the root Dockerfile from the repo-root context (same as Railway).
+    # Builds the root Dockerfile from the repo-root context.
     image: ghcr.io/${GITHUB_REPO:-local}/api:${IMAGE_TAG:-latest}
     build:
       context: .

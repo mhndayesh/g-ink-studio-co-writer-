@@ -1,5 +1,5 @@
-# Root Dockerfile for the API — builds from the REPO ROOT context so Railway (and
-# anything that builds from the repo root) works with NO "Root Directory" setting.
+# Root Dockerfile for the API — builds from the REPO ROOT context, so any builder
+# pointed at the repo root works with NO "Root Directory" setting.
 # Same build as apps/api/Dockerfile, just with apps/api/ paths.
 FROM python:3.12-slim AS base
 WORKDIR /app
@@ -29,16 +29,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 gosu \
 COPY apps/api/ ./
 # COPY preserves host file modes — force readable so a stray non-world-readable
 # file can't crash the non-root user at import. Also pre-create the uploads dir
-# owned by the runtime user (cover-image storage); on Railway mount a Volume here.
+# owned by the runtime user (cover-image storage); mount a persistent Volume here.
 RUN chmod -R a+rX /app && chmod +x entrypoint.sh \
  && mkdir -p /app/uploads && chown gink:gink /app/uploads
 # NOTE: intentionally NO `USER gink` here — entrypoint.sh must start as root so it
 # can chown the mounted uploads volume, then it drops to `gink` via `gosu`.
 EXPOSE 8080
 # Self-contained healthcheck so the image is healthy under any orchestrator (not
-# just compose/Railway, which also declare their own). Uses python (always present).
+# just compose, which also declares its own). Uses python (always present).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:'+os.environ.get('PORT','8080')+'/health', timeout=3).status==200 else 1)"
-# Binds $PORT (Railway) with an 8080 fallback. Migrations run via railway.json's
-# preDeployCommand (or `docker compose run --rm api alembic upgrade head`).
+# Binds $PORT when the platform injects one, with an 8080 fallback. Migrations run
+# via `docker compose run --rm api alembic upgrade head` before the app starts.
 CMD ["./entrypoint.sh"]

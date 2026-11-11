@@ -47,7 +47,7 @@ const config: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
-          // HSTS — Caddy used to add this; on Railway/other hosts the app must.
+          // HSTS — Caddy used to add this; behind any other proxy the app must.
           // (No `preload` — that's a hard-to-reverse commitment to the HSTS list.)
           { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
         ],

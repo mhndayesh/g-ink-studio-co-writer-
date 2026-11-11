@@ -1,5 +1,5 @@
 # Root build context — keep images small + secret-free when building from the repo
-# root (Railway builds from root; the Dockerfile COPYs only apps/api/).
+# root (the root Dockerfile COPYs only apps/api/).
 .git
 .github
 **/.venv

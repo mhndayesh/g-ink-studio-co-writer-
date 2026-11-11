@@ -86,7 +86,7 @@ export default async function PrivacyPage() {
           <UL>
             <li><B>Polar</B> &mdash; مدفوعات الاشتراك، بصفتها تاجر التسجيل.</li>
             <li><B>مزوّدو الذكاء الاصطناعي والنماذج اللغوية</B> (مثل DeepSeek والمزوّدين المتوافقين مع OpenAI) &mdash; لتوليد ردود الذكاء الاصطناعي، على النحو الموضح في القسم 2.</li>
-            <li><B>Railway</B> و<B>Cloudflare</B> &mdash; الاستضافة وتقديم المحتوى والأمان.</li>
+            <li><B>Cloudflare</B> &mdash; تقديم المحتوى والأمان.</li>
           </UL>
           <P>نحن لا نبيع معلوماتك الشخصية.</P>
 
@@ -188,7 +188,7 @@ export default async function PrivacyPage() {
           <UL>
             <li><B>Polar</B> &mdash; subscription payments, as Merchant of Record.</li>
             <li><B>AI / LLM providers</B> (e.g. DeepSeek and OpenAI-compatible providers) &mdash; to generate AI responses, as described in section 2.</li>
-            <li><B>Railway</B> and <B>Cloudflare</B> &mdash; hosting, content delivery, and security.</li>
+            <li><B>Cloudflare</B> &mdash; content delivery and security.</li>
           </UL>
           <P>We do not sell your personal information.</P>
 

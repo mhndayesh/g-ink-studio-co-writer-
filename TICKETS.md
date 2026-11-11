@@ -19,21 +19,58 @@ Never delete a ticket. Only one ticket may be FIXING at a time.
 
 ## Open
 
-### T-006 — Railway deploy configs orphaned after RAILWAY.md removal
-- **Status:** OPEN
-- **Opened:** 2026-11-11
-- **Area:** `railway.json`, `railway.worker.json` at repo root
-- **Problem:** The docs cleanup (T-002) removed `RAILWAY.md`, but the two Railway config
-  files stayed (600 bytes, kept deliberately because a live Railway service may read them).
-  Nothing in the remaining docs explains them, so the deploy path is now undocumented.
-- **Resolution:** (filled at close) — decision needed: re-document in `DEPLOY.md`, or delete both.
-- **Docs to update:** (filled at close)
+_none_
 
 ## Fixing
 
 _none_
 
 ## Closed
+
+### T-007 — Privacy policy still names Railway as a hosting provider
+- **Status:** CLOSED
+- **Opened:** 2026-11-11
+- **Area:** `apps/web/app/privacy/page.tsx` (section 5, AR + EN)
+- **Problem:** Both language blocks listed "Railway and Cloudflare — hosting, content delivery,
+  and security", contradicting the Railway removal in T-006. Owner-facing legal text naming a
+  subprocessor, so the wording could not be guessed.
+- **Resolution:** Removed on the owner's instruction ("remove for now"). Section 5 now names only
+  Cloudflare, described as content delivery + security. The "hosting" claim was deliberately not
+  reassigned to Cloudflare (it is CDN/security, not application hosting) — so the policy now names
+  no hosting provider at all. Verified: text-node-only edits, so no JSX structure changed —
+  `<UL>`/`</UL>` still 8/8, `<li>` count unchanged at 26, Arabic text confirmed intact via a UTF-8
+  read (not the console), and `git grep -i railway` over the tree excluding the log files returns
+  nothing.
+  Commit ref: see `CHANGES.md` 2026-11-11 (privacy policy entry).
+- **Docs to update:** none. If Hetzner (per `DEPLOY.md`) should be disclosed as the host, that is a
+  new ticket — it is a claim to add, not a stale one to fix.
+
+### T-006 — Remove the Railway deploy path
+- **Status:** CLOSED
+- **Opened:** 2026-11-11
+- **Area:** `railway.json`, `railway.worker.json`, `apps/web/railway.json`
+- **Problem:** The docs cleanup (T-002) removed `RAILWAY.md`, leaving three Railway config files
+  with nothing explaining them. Investigation found a third file the ticket did not know about
+  (`apps/web/railway.json`), and that root `railway.json` was not documentation but live deploy
+  behaviour: its `preDeployCommand` (`alembic upgrade head`) is the only thing migrating the DB on
+  a Railway deploy, per `Dockerfile`. Deleting it blind would have shipped code against an
+  unmigrated schema; the risk was raised before any file was removed.
+- **Resolution:** Owner confirmed Railway is not wanted, so the whole deploy path was removed:
+  all three configs deleted (`apps/web/railway.json` included), and every comment that claimed
+  Railway builds or hosts this repo rewritten so nobody re-creates them — `Dockerfile` (3 sites,
+  including the pre-deploy-migration note), `.dockerignore`, `apps/api/entrypoint.sh` (2),
+  `apps/web/Dockerfile`, `apps/web/next.config.ts`, `docker-compose.prod.yml`, plus the generic
+  host examples in `app/db/session.py` and `migrations/env.py`. `ci.yml`'s comment was **not**
+  changed: GitHub rejects any push touching `.github/workflows/` without the `workflow` token
+  scope, which this account lacks (`gist, read:org, repo`). The reworded file is parked at
+  `%TEMP%\opencode\ci.yml.pending-workflow-scope` — apply it after `gh auth refresh -s workflow`,
+  otherwise that one stale comment stays. Comments only — no behaviour changed. Verified:
+  `py_compile` exit 0 on both
+  Python files, `tsc --noEmit` exit 0 on the frontend, and both YAML files still parse. Migration
+  remains covered by `docker compose run --rm api alembic upgrade head` (documented in `DEPLOY.md`
+  and now in the `Dockerfile` comment).
+- **Docs to update:** `DEPLOY.md` already documents the compose-based path — no change needed.
+  Follow-up for the privacy text tracked as T-007.
 
 ### T-005 — Commit the uncommitted authoring-lifecycle work
 - **Status:** CLOSED
